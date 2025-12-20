@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Login - Nexus Chat</title>
+    <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; }
+        .login-container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 300px; text-align: center; }
+        input { width: 90%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; }
+        button { width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .error { color: red; font-size: 0.9em; display: none; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="login-container">
+    <h2>Nexus Chat</h2>
+    <input type="text" id="username" placeholder="Username">
+    <input type="password" id="password" placeholder="Password">
+    <button onclick="login()">Log In</button>
+    <p class="error" id="error-msg">Invalid Credentials</p>
+    <p style="font-size: 0.8em;">Don't have an account? <a href="#" onclick="register()">Sign Up</a></p>
+</div>
+
+<script>
+    const API_URL = 'http://localhost:8080/api/auth';
+
+    function login() {
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+
+        fetch(API_URL + '/signin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.accessToken) {
+                // 1. SAVE TOKEN TO BROWSER STORAGE
+                localStorage.setItem('jwtToken', data.accessToken);
+                localStorage.setItem('username', data.username);
+                
+                // 2. REDIRECT TO CHAT PAGE
+                window.location.href = '/index.html'; 
+            } else {
+                showError("Invalid username or password");
+            }
+        })
+        .catch(err => showError("Server Error"));
+    }
+
+    function register() {
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        
+        fetch(API_URL + '/signup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        })
+        .then(res => {
+            if(res.ok) alert("Registered! You can now login.");
+            else showError("Username already taken");
+        });
+    }
+
+    function showError(msg) {
+        const el = document.getElementById('error-msg');
+        el.innerText = msg;
+        el.style.display = 'block';
+    }
+</script>
+
+</body>
+</html>
