@@ -123,6 +123,7 @@ package com.example.websocket.controller;
 
 import com.example.websocket.model.ChatMessage;
 import com.example.websocket.Repository.ChatRepository;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -137,6 +138,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
+import org.springframework.web.bind.annotation.CrossOrigin;
+@CrossOrigin(origins = "*", maxAge = 3600)
 @RestController
 public class ChatController {
 
@@ -161,18 +164,31 @@ public class ChatController {
     }
 
     // --- 2. PRIVATE CHAT (Websocket) ---
-    @MessageMapping("/chat.private")
-    public void sendPrivateMessage(@Payload ChatMessage chatMessage) {
-        chatMessage.setType("CHAT");
-        chatRepository.save(chatMessage); // Save private message to DB
+@MessageMapping("/chat.private")
+public void receivePrivateMessage(@Payload ChatMessage chatMessage) {
+    // PRINT 1: Check the whole object
+    System.out.println("--- NEW PRIVATE MESSAGE ARRIVED ---");
+    System.out.println("Sender: " + chatMessage.getSender());
+    System.out.println("Receiver: " + chatMessage.getReceiver());
+    System.out.println("Content: " + chatMessage.getContent());
 
-        // Sends to /user/{receiverName}/queue/messages
-        messagingTemplate.convertAndSendToUser(
-                chatMessage.getReceiver(),
-                "/queue/messages",
-                chatMessage
-        );
+    if (chatMessage.getReceiver() == null || chatMessage.getReceiver().isEmpty()) {
+        System.out.println("!!! ERROR: Receiver is NULL. Stopping send. !!!");
+        return;
     }
+
+    // Send instantly
+    messagingTemplate.convertAndSendToUser(
+        chatMessage.getReceiver(), 
+        "/queue/messages", 
+        chatMessage
+    );
+    System.out.println("Message pushed to /user/" + chatMessage.getReceiver() + "/queue/messages");
+
+    // Save to database
+    chatRepository.save(chatMessage);
+    System.out.println("Message saved to MongoDB.");
+}
 
     // --- 3. CHAT HISTORY API (REST) ---
     // This is the link your browser calls to load old messages

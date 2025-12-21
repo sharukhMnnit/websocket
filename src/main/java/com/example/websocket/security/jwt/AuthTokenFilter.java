@@ -25,39 +25,59 @@ public class AuthTokenFilter extends OncePerRequestFilter {
   private UserDetailsServiceImpl userDetailsService;
 
   private static final Logger logger = LoggerFactory.getLogger(AuthTokenFilter.class);
+@Override
+  protected void doFilterInternal(HttpServletRequest request,
+  HttpServletResponse response, FilterChain filterChain)
+  throws ServletException, IOException {
+  try {
+  // 1. Get JWT from the HTTP Header
+  String jwt = parseJwt(request);
 
-  @Override
-  protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
-      throws ServletException, IOException {
-    try {
-      // 1. Get JWT from the HTTP Header
-      String jwt = parseJwt(request);
-      
-      // 2. Validate the JWT
-      if (jwt != null && jwtUtils.validateJwtToken(jwt)) {
-        String username = jwtUtils.getUserNameFromJwtToken(jwt);
+  // 2. Validate the JWT
+  if (jwt != null && jwtUtils.validateJwtToken(jwt)) {
+  String username = jwtUtils.getUserNameFromJwtToken(jwt);
 
-        // 3. Load the User details from Database
-        UserDetails userDetails = userDetailsService.loadUserByUsername(username);
-        
-        // 4. Set the "Authentication" in Spring Security Context
-        // (This effectively "logs them in" for this request)
-        UsernamePasswordAuthenticationToken authentication =
-            new UsernamePasswordAuthenticationToken(
-                userDetails,
-                null,
-                userDetails.getAuthorities());
-        authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+  // 3. Load the User details from Database
+  UserDetails userDetails = userDetailsService.loadUserByUsername(username);
 
-        SecurityContextHolder.getContext().setAuthentication(authentication);
-      }
-    } catch (Exception e) {
-      logger.error("Cannot set user authentication: {}", e.getMessage());
-    }
+  // 4. Set the "Authentication" in Spring Security Context
+  // (This effectively "logs them in" for this request)
+  UsernamePasswordAuthenticationToken authentication =
+  new UsernamePasswordAuthenticationToken(
+  userDetails,
+  null,
+  userDetails.getAuthorities());
+  authentication.setDetails(new
+  WebAuthenticationDetailsSource().buildDetails(request));
 
-    // 5. Continue the filter chain
-    filterChain.doFilter(request, response);
+  SecurityContextHolder.getContext().setAuthentication(authentication);
   }
+  } catch (Exception e) {
+  logger.error("Cannot set user authentication: {}", e.getMessage());
+  }
+
+  // 5. Continue the filter chain
+  filterChain.doFilter(request, response);
+  }
+  // @Override
+
+  // protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+  //     throws ServletException, IOException {
+  //   try {
+  //     String jwt = parseJwt(request);
+  //     if (jwt != null && jwtUtils.validateJwtToken(jwt)) {
+  //       // PRINT 3: Confirm successful login for this request
+  //       String username = jwtUtils.getUserNameFromJwtToken(jwt);
+  //       System.out.println("AUTH SUCCESS: User " + username + " is accessing " + request.getRequestURI());
+
+  //       UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+  //       // ... existing logic to set security context ...
+  //     }
+  //   } catch (Exception e) {
+  //     System.out.println("AUTH FAILED for " + request.getRequestURI() + " Error: " + e.getMessage());
+  //   }
+  //   filterChain.doFilter(request, response);
+  // }
 
   // Helper method to remove "Bearer " from the token string
   private String parseJwt(HttpServletRequest request) {

@@ -6,9 +6,10 @@ import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
-
+import org.springframework.beans.factory.annotation.Value;
 import java.security.Key;
 import java.util.Date;
 
@@ -17,11 +18,22 @@ public class JwtUtils {
   private static final Logger logger = LoggerFactory.getLogger(JwtUtils.class);
 
   // --- HARDCODED SECRET (No @Value annotation!) ---
-  private String jwtSecret = "404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970";
-  private int jwtExpirationMs = 86400000;
+  // private String jwtSecret = "404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970";
+  // private int jwtExpirationMs = 86400000;
   // ------------------------------------------------
+      @Value("${app.jwtSecret}")
+      private String jwtSecret;
 
+      @Value("${app.jwtExpirationMs}")
+      private int jwtExpirationMs;
+
+  
   public String generateJwtToken(Authentication authentication) {
+
+      
+
+
+
     UserDetailsImpl userPrincipal = (UserDetailsImpl) authentication.getPrincipal();
 
     return Jwts.builder()

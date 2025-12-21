@@ -42,6 +42,20 @@
         .message-input-area input { flex-grow: 1; padding: 12px; border: 1px solid #ddd; border-radius: 20px; outline: none; }
         .message-input-area button { padding: 10px 25px; background-color: #1abc9c; color: white; border: none; border-radius: 20px; cursor: pointer; font-weight: bold; }
         .message-input-area button:hover { background-color: #16a085; }
+        /* This makes the user list item glow red instantly when a message arrives */
+.user-list li.has-new-message {
+    border-left: 5px solid #e74c3c !important;
+    background-color: rgba(231, 76, 60, 0.15) !important;
+    font-weight: bold;
+}
+
+/* Adds a small red dot notification */
+.user-list li.has-new-message::after {
+    content: '●';
+    color: #e74c3c;
+    margin-left: auto;
+    font-size: 14px;
+}
     </style>
     <script>
         // --- SECURITY CHECK ---

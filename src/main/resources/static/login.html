@@ -3,67 +3,92 @@
 <head>
     <meta charset="UTF-8">
     <title>Login - Nexus Chat</title>
-    <style>
-        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; }
-        .login-container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 300px; text-align: center; }
-        input { width: 90%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; }
-        button { width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <style>
+        body { font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; margin: 0; }
+        .login-container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 90%; max-width: 350px; text-align: center; }
+        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; }
         button:hover { background: #0056b3; }
         .error { color: red; font-size: 0.9em; display: none; margin-top: 10px; }
+        a { color: #007bff; text-decoration: none; }
     </style>
 </head>
 <body>
 
 <div class="login-container">
     <h2>Nexus Chat</h2>
-    <input type="text" id="username" placeholder="Username">
+    <input type="text" id="username" placeholder="Username" autocomplete="off">
     <input type="password" id="password" placeholder="Password">
     <button onclick="login()">Log In</button>
     <p class="error" id="error-msg">Invalid Credentials</p>
-    <p style="font-size: 0.8em;">Don't have an account? <a href="#" onclick="register()">Sign Up</a></p>
+    <p style="font-size: 0.8em; margin-top: 15px;">Don't have an account? <a href="#" onclick="register()">Sign Up</a></p>
 </div>
 
 <script>
-    const API_URL = 'http://localhost:8080/api/auth';
+    // --- THE FIX: RELATIVE URL (Works on Cloudflare & Localhost) ---
+    const API_URL = '/api/auth'; 
 
     function login() {
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
+        const errorMsg = document.getElementById('error-msg');
+
+        errorMsg.style.display = 'none';
+
+        if(!username || !password) {
+            showError("Please enter username and password");
+            return;
+        }
 
         fetch(API_URL + '/signin', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password })
         })
-        .then(res => res.json())
+        .then(res => {
+            if (!res.ok) throw new Error("Login Failed");
+            return res.json();
+        })
         .then(data => {
             if (data.accessToken) {
-                // 1. SAVE TOKEN TO BROWSER STORAGE
+                // 1. SAVE TOKEN
                 localStorage.setItem('jwtToken', data.accessToken);
                 localStorage.setItem('username', data.username);
                 
-                // 2. REDIRECT TO CHAT PAGE
+                // 2. REDIRECT RELATIVELY
                 window.location.href = '/index.html'; 
             } else {
-                showError("Invalid username or password");
+                showError("Invalid response from server");
             }
         })
-        .catch(err => showError("Server Error"));
+        .catch(err => {
+            console.error(err);
+            showError("Invalid Username or Password");
+        });
     }
 
     function register() {
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
         
+        if(!username || !password) {
+            showError("Enter details to register");
+            return;
+        }
+
         fetch(API_URL + '/signup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password })
         })
         .then(res => {
-            if(res.ok) alert("Registered! You can now login.");
-            else showError("Username already taken");
-        });
+            if(res.ok) {
+                alert("Registration Successful! Please Log In.");
+            } else {
+                res.text().then(text => showError(text || "Username already taken"));
+            }
+        })
+        .catch(err => showError("Server Error: Check connection"));
     }
 
     function showError(msg) {
