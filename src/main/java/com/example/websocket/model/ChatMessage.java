@@ -14,6 +14,8 @@ public class ChatMessage {
     private String sender;
     private String receiver;  // 3. Added for Private Messaging (1-to-1)
     private String timestamp; // 4. To save WHEN the message was sent
+    private MessageStatus status;
+    private String frontId;
 
     // Enum to track what kind of message this is
     public enum MessageType {
@@ -21,6 +23,19 @@ public class ChatMessage {
         JOIN,
         LEAVE
     }
+    // message status enum
+    public enum MessageStatus {
+    RECEIVED, DELIVERED, READ,SENT
+    }
+    public MessageStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(MessageStatus status) {
+        this.status = status;
+    }
+
+
 
     // --- Constructors ---
     public ChatMessage() {
@@ -82,4 +97,7 @@ public void setType(String type) {
     public void setTimestamp(String timestamp) {
         this.timestamp = timestamp;
     }
+    // --- NEW GETTERS/SETTERS ---
+    public String getFrontId() { return frontId; }
+    public void setFrontId(String frontId) { this.frontId = frontId; }
 }

@@ -122,6 +122,7 @@
 package com.example.websocket.controller;
 
 import com.example.websocket.model.ChatMessage;
+import com.example.websocket.model.ChatMessage.MessageStatus;
 import com.example.websocket.Repository.ChatRepository;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -130,15 +131,11 @@ import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.ResponseBody;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
-import org.springframework.web.bind.annotation.CrossOrigin;
 @CrossOrigin(origins = "*", maxAge = 3600)
 @RestController
 public class ChatController {
@@ -149,11 +146,11 @@ public class ChatController {
     @Autowired
     private ChatRepository chatRepository;
 
-    // --- 1. PUBLIC CHAT (Websocket) ---
+    // --- 1. PUBLIC CHAT (WebSocket) ---
     @MessageMapping("/chat.sendMessage")
     @SendTo("/topic/public")
     public ChatMessage sendMessage(@Payload ChatMessage chatMessage) {
-        chatRepository.save(chatMessage); // Save every public message to DB
+        chatRepository.save(chatMessage);
         return chatMessage;
     }
 
@@ -163,42 +160,67 @@ public class ChatController {
         return chatMessage;
     }
 
-    // --- 2. PRIVATE CHAT (Websocket) ---
-@MessageMapping("/chat.private")
-public void receivePrivateMessage(@Payload ChatMessage chatMessage) {
-    // PRINT 1: Check the whole object
-    System.out.println("--- NEW PRIVATE MESSAGE ARRIVED ---");
-    System.out.println("Sender: " + chatMessage.getSender());
-    System.out.println("Receiver: " + chatMessage.getReceiver());
-    System.out.println("Content: " + chatMessage.getContent());
+    // --- 2. PRIVATE CHAT (Updated for Echo/Optimistic UI) ---
+    @MessageMapping("/chat.private")
+    public void receivePrivateMessage(@Payload ChatMessage chatMessage) {
+        
+        // A. Set Defaults
+        chatMessage.setStatus(MessageStatus.SENT);
+        chatMessage.setTimestamp(LocalDateTime.now().toString());
 
-    if (chatMessage.getReceiver() == null || chatMessage.getReceiver().isEmpty()) {
-        System.out.println("!!! ERROR: Receiver is NULL. Stopping send. !!!");
-        return;
+        // B. Save to DB FIRST (Generates the real unique ID)
+        ChatMessage saved = chatRepository.save(chatMessage);
+
+        // C. Send to Receiver (So they see the message with the Real ID)
+        if (chatMessage.getReceiver() != null && !chatMessage.getReceiver().isEmpty()) {
+            messagingTemplate.convertAndSendToUser(
+                chatMessage.getReceiver(), 
+                "/queue/messages", 
+                saved 
+            );
+        }
+
+        // D. Send to Sender (THE ECHO)
+        // This gives the Sender the real DB ID so they can link Blue Ticks later
+        messagingTemplate.convertAndSendToUser(
+            chatMessage.getSender(), 
+            "/queue/messages", 
+            saved 
+        );
+        
+        System.out.println("Message processed & saved with ID: " + saved.getId());
     }
 
-    // Send instantly
-    messagingTemplate.convertAndSendToUser(
-        chatMessage.getReceiver(), 
-        "/queue/messages", 
-        chatMessage
-    );
-    System.out.println("Message pushed to /user/" + chatMessage.getReceiver() + "/queue/messages");
+    // --- 3. MESSAGE READ ACKNOWLEDGMENT (Blue Ticks) ---
+    @MessageMapping("/chat.ack")
+    public void acknowledgeMessage(@Payload MessageAck ack) {
+        System.out.println("--- ACK RECEIVED ---");
+        System.out.println("Message " + ack.getMessageId() + " status updated to " + ack.getStatus());
 
-    // Save to database
-    chatRepository.save(chatMessage);
-    System.out.println("Message saved to MongoDB.");
-}
+        // 1. Find the message in DB
+        ChatMessage msg = chatRepository.findById(ack.getMessageId()).orElse(null);
+        
+        if(msg != null) {
+            // 2. Update Status to READ/DELIVERED
+            msg.setStatus(ack.getStatus());
+            chatRepository.save(msg);
+            
+            // 3. Notify the SENDER that their message was read (Update their UI ticks)
+            messagingTemplate.convertAndSendToUser(
+                msg.getSender(),
+                "/queue/ack",
+                ack // Sends { messageId: "123", status: "READ" }
+            );
+        }
+    }
 
-    // --- 3. CHAT HISTORY API (REST) ---
-    // This is the link your browser calls to load old messages
+    // --- 4. CHAT HISTORY API (REST) ---
     @GetMapping("/api/messages/{user1}/{user2}")
     @ResponseBody
     public ResponseEntity<List<ChatMessage>> getChatHistory(
             @PathVariable String user1, 
             @PathVariable String user2) {
         
-        // Find messages where (Sender=A AND Receiver=B) OR (Sender=B AND Receiver=A)
         List<ChatMessage> messages = chatRepository.findBySenderAndReceiverOrSenderAndReceiver(
                 user1, user2, 
                 user2, user1

@@ -663,106 +663,70 @@ var messageInput = document.querySelector('#message');
 var messageArea = document.querySelector('#messageArea');
 var chatTitle = document.querySelector('#chat-title');
 
-// --- 1. INITIALIZATION ---
+// --- INITIALIZATION ---
 if (username) {
     connect();
-    // Fetch users slightly delayed to ensure DOM is ready
     setTimeout(fetchAllUsers, 500); 
 } else {
     window.location.href = '/login.html';
 }
 
-// --- 2. CONNECT TO WEBSOCKET ---
+// --- CONNECT ---
 function connect() {
-    // RELATIVE URL: Works on Cloudflare/Ngrok/Localhost automatically
+    // 1. Connect to WebSocket
     var socket = new SockJS('/ws'); 
     stompClient = Stomp.over(socket);
-
-    // Disable debug logs in console to keep it clean
     stompClient.debug = null; 
 
-    var headers = {
-        'Authorization': 'Bearer ' + localStorage.getItem('jwtToken')
-    };
+    var headers = { 'Authorization': 'Bearer ' + localStorage.getItem('jwtToken') };
 
     stompClient.connect(headers, onConnected, onError);
 }
 
 function onConnected() {
     console.log("Connected to WebSocket!");
-    stompClient.subscribe('/topic/public', onMessageReceived);
-    stompClient.subscribe('/user/queue/messages', onPrivateMessageReceived);
     
-    // Notify server that I joined
+    // 2. Subscribe to Topics
+    stompClient.subscribe('/topic/public', onMessageReceived);
+    stompClient.subscribe('/user/queue/messages', onPrivateMessageReceived); // Handles Chat & Echo
+    stompClient.subscribe('/user/queue/ack', onAckReceived); // Handles Blue Ticks
+    
+    // 3. Notify Server
     stompClient.send("/app/chat.addUser", {}, JSON.stringify({sender: username, type: 'JOIN'}));
 }
 
-function onError(error) {
-    console.error('WebSocket Error:', error);
-    // Optional: Redirect to login if auth fails specifically (uncomment if needed)
-    // window.location.href = '/login.html'; 
-}
+function onError(error) { console.error('WebSocket Error:', error); }
 
-// --- 3. FETCH USERS ---
+// --- FETCH USERS (REST API) ---
 function fetchAllUsers() {
     const token = localStorage.getItem('jwtToken');
-    if (!token) return;
-
-    fetch('/api/users', {
-        method: 'GET',
-        headers: { 
-            'Authorization': 'Bearer ' + token.trim() 
-        }
-    })
-    .then(response => {
-        if (response.status === 401 || response.status === 403) {
-            console.log("Session expired.");
-            return [];
-        }
-        return response.json();
-    })
+    fetch('/api/users', { headers: { 'Authorization': 'Bearer ' + token.trim() }})
+    .then(res => res.json())
     .then(users => {
-        if (!usersList) return; // Guard clause
-        usersList.innerHTML = ''; // Clear list
-        let foundOtherUsers = false;
-
+        usersList.innerHTML = ''; 
         if (Array.isArray(users)) {
             users.forEach(user => {
-                // Show everyone EXCEPT myself
-                if (user && user.toLowerCase() !== username.toLowerCase()) {
-                    addUserToSidebar(user);
-                    foundOtherUsers = true;
-                }
+                if (user && user.toLowerCase() !== username.toLowerCase()) addUserToSidebar(user);
             });
         }
-        
-        if (!foundOtherUsers) {
-            var li = document.createElement('li');
-            li.innerHTML = '<span style="padding:10px; font-size:0.8em; color:#ccc;">No other users online.</span>';
-            usersList.appendChild(li);
-        }
-    })
-    .catch(err => console.error("Fetch Error:", err));
+    });
 }
 
-// --- 4. SIDEBAR UI ---
 function addUserToSidebar(user) {
     var li = document.createElement('li');
     li.id = "user-" + user;
-    li.innerHTML = `
-        <div class="user-avatar">${user.charAt(0).toUpperCase()}</div>
-        <span>${user}</span>
-    `;
+    li.innerHTML = `<div class="user-avatar">${user.charAt(0).toUpperCase()}</div><span>${user}</span>`;
     li.onclick = function() { selectUser(user); };
     usersList.appendChild(li);
 }
 
-// --- 5. SELECT USER ---
+// --- SELECT USER ---
 function selectUser(user) {
     selectedUser = user;
     if(chatTitle) chatTitle.innerText = "Chat with " + user;
     messageArea.innerHTML = "";
     
+    // UI Update
     document.querySelectorAll('#usersList li').forEach(li => li.classList.remove('active'));
     var activeLi = document.getElementById("user-" + user);
     if (activeLi) {
@@ -772,49 +736,105 @@ function selectUser(user) {
 
     // Fetch History
     const token = localStorage.getItem('jwtToken');
-    fetch(`/api/messages/${username}/${user}`, {
-        headers: { 'Authorization': 'Bearer ' + token }
-    })
+    fetch(`/api/messages/${username}/${user}`, { headers: { 'Authorization': 'Bearer ' + token } })
     .then(res => res.json())
     .then(msgs => {
-        msgs.forEach(msg => displayMessage(msg, msg.sender === username));
-    })
-    .catch(err => console.error("History Error:", err));
+        msgs.forEach(msg => {
+            const isSelf = msg.sender === username;
+            
+            // If I am reading unread messages, mark them READ now
+            if (!isSelf && msg.status !== 'READ') {
+                sendAck(msg.id, 'READ');
+                msg.status = 'READ';
+            }
+            displayMessage(msg, isSelf);
+        });
+    });
 }
 
-// --- 6. SEND MESSAGE ---
+// --- SEND MESSAGE (Optimistic UI) ---
 function sendMessage(event) {
     event.preventDefault();
     var messageContent = messageInput.value.trim();
     
     if (messageContent && stompClient) {
+        
+        // 1. Create Temporary ID
+        var tempId = "temp-" + Date.now();
+
         var chatMessage = {
             sender: username,
             content: messageContent,
             type: 'CHAT',
-            receiver: selectedUser
+            receiver: selectedUser,
+            timestamp: new Date().toISOString(),
+            status: 'SENT',
+            frontId: tempId // Send this to server to track it
         };
 
+        // 2. DISPLAY INSTANTLY (Zero Lag)
+        displayMessage(chatMessage, true); 
+
+        // 3. Send to Server
         if (selectedUser) {
-            // Private Message
             stompClient.send("/app/chat.private", {}, JSON.stringify(chatMessage));
-            displayMessage(chatMessage, true); // Instant Echo
         } else {
-            // Public Message (if you have global chat enabled)
             stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(chatMessage));
         }
         messageInput.value = '';
     }
 }
 
+// --- HANDLE INCOMING MESSAGES (ECHO + CHAT) ---
 function onPrivateMessageReceived(payload) {
     var message = JSON.parse(payload.body);
+    
+    // A. HANDLE ECHO (My own message coming back from server)
+    if (message.sender === username) {
+        // Find the temporary bubble using frontId
+        if (message.frontId) {
+            var tempBubble = document.getElementById("msg-" + message.frontId);
+            if (tempBubble) {
+                // SWAP ID: Replace temp ID with Real Server ID
+                tempBubble.id = "msg-" + message.id;
+                console.log("Updated bubble ID to: " + message.id);
+            }
+        }
+        return; // Stop here, don't display a duplicate
+    }
+
+    // B. HANDLE FRIEND'S MESSAGE
     if (selectedUser && selectedUser.toLowerCase() === message.sender.toLowerCase()) {
+        // I am looking at the chat -> Mark READ
         displayMessage(message, false);
+        sendAck(message.id, 'READ'); 
     } else {
+        // I am elsewhere -> Notification + Mark DELIVERED
         var li = document.getElementById("user-" + message.sender);
         if(li) li.classList.add('has-new-message');
+        sendAck(message.id, 'DELIVERED'); 
     }
+}
+
+// --- HANDLE READ RECEIPTS ---
+function onAckReceived(payload) {
+    var ack = JSON.parse(payload.body); // { messageId: "123", status: "READ" }
+    
+    var msgElement = document.getElementById("msg-" + ack.messageId);
+    if (msgElement) {
+        var tickElement = msgElement.querySelector('.status-tick');
+        if (tickElement) {
+            tickElement.innerText = getStatusIcon(ack.status);
+            tickElement.className = `status-tick ${getStatusClass(ack.status)}`;
+        }
+    }
+}
+
+// --- HELPER: SEND ACK ---
+function sendAck(messageId, status) {
+    if(!stompClient || !messageId) return;
+    var ack = { messageId: messageId, status: status };
+    stompClient.send("/app/chat.ack", {}, JSON.stringify(ack));
 }
 
 function onMessageReceived(payload) {
@@ -822,12 +842,65 @@ function onMessageReceived(payload) {
     if (message.type === 'JOIN') fetchAllUsers();
 }
 
+// --- DISPLAY LOGIC ---
 function displayMessage(message, isSelf) {
     var li = document.createElement('li');
     li.classList.add('message-item', isSelf ? 'message-self' : 'message-other');
-    li.innerHTML = `<span class="message-sender">${isSelf ? 'You' : message.sender}</span><p>${message.content}</p>`;
+    
+    // Use Server ID if available, otherwise Temp ID
+    var domId = message.id ? "msg-" + message.id : "msg-" + message.frontId;
+    li.id = domId;
+
+    var realTime = formatTime(message.timestamp); 
+    var statusHtml = "";
+    
+    if (isSelf) {
+        var currentStatus = message.status || 'SENT'; 
+        statusHtml = `
+            <div class="message-meta">
+                <span class="message-time">${realTime}</span>
+                <span class="status-tick ${getStatusClass(currentStatus)}">
+                    ${getStatusIcon(currentStatus)}
+                </span>
+            </div>
+        `;
+    } else {
+        statusHtml = `<div class="message-meta"><span class="message-time">${realTime}</span></div>`;
+    }
+
+    li.innerHTML = `
+        <span class="message-sender">${isSelf ? 'You' : message.sender}</span>
+        <p style="margin:0">${message.content}</p>
+        ${statusHtml}
+    `;
+
     messageArea.appendChild(li);
     messageArea.scrollTop = messageArea.scrollHeight;
+}
+
+// --- UTILS ---
+function formatTime(dateString) {
+    if (!dateString) return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const date = new Date(dateString);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function getStatusIcon(status) {
+    switch(status) {
+        case 'SENT': return '✓'; 
+        case 'DELIVERED': return '✓✓'; 
+        case 'READ': return '✓✓';
+        default: return '✓';
+    }
+}
+
+function getStatusClass(status) {
+    switch(status) {
+        case 'SENT': return 'tick-sent';
+        case 'DELIVERED': return 'tick-delivered';
+        case 'READ': return 'tick-read';
+        default: return 'tick-sent';
+    }
 }
 
 if(messageForm) messageForm.addEventListener('submit', sendMessage, true);
