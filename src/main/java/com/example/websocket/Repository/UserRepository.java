@@ -1,5 +1,6 @@
 package com.example.websocket.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.mongodb.repository.MongoRepository;
@@ -12,4 +13,6 @@ public interface UserRepository extends MongoRepository<User, String> {
     
     // This checks if a username exists (Needed for Registration)
     Boolean existsByUsername(String username);
+
+    public List<User> findByUsernameContainingIgnoreCase(String query);
 }

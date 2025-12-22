@@ -1,5 +1,8 @@
 package com.example.websocket.model;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -9,6 +12,8 @@ public class User {
     private String id;
     private String username;
     private String password; // This will be encrypted (e.g., "$2a$10$...")
+    private Set<String> friendIds = new HashSet<>();
+    private Set<String> friendRequests = new HashSet<>();
 
     // Constructors
     public User() {}
@@ -27,4 +32,20 @@ public class User {
     
     public String getPassword() { return password; }
     public void setPassword(String password) { this.password = password; }
+
+    public Set<String> getFriendIds() {
+        return friendIds;
+    }
+
+    public void setFriendIds(Set<String> friendIds) {
+        this.friendIds = friendIds;
+    }
+
+    public Set<String> getFriendRequests() {
+        return friendRequests;
+    }
+
+    public void setFriendRequests(Set<String> friendRequests) {
+        this.friendRequests = friendRequests;
+    }
 }

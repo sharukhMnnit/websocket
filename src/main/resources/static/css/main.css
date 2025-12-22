@@ -14,4 +14,18 @@
     0% { background-color: rgba(231, 76, 60, 0.1); }
     50% { background-color: rgba(231, 76, 60, 0.2); }
     100% { background-color: rgba(231, 76, 60, 0.1); }
+}.unread-badge {
+    background-color: #ff3b30; /* iOS Red */
+    color: white;
+    border-radius: 50%;
+    padding: 2px 6px;
+    font-size: 12px;
+    font-weight: bold;
+    margin-left: auto; /* Push to right side */
+    display: none; /* Hidden by default */
+}
+
+/* When it has content, show it */
+.unread-badge:not(:empty) {
+    display: inline-block;
 }

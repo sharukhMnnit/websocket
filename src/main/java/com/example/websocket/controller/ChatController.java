@@ -133,6 +133,7 @@ import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -227,4 +228,20 @@ public class ChatController {
         );
         return ResponseEntity.ok(messages);
     }
+    //counyt unread messages
+    // Inside ChatController
+
+@GetMapping("/messages/{senderId}/count")
+public ResponseEntity<Long> countUnreadMessages(
+        @PathVariable String senderId,
+        Principal principal) {
+
+    long count = chatRepository.countBySenderAndReceiverAndStatus(
+        senderId, 
+        principal.getName(), 
+        MessageStatus.DELIVERED
+    );
+
+    return ResponseEntity.ok(count);
+}
 }

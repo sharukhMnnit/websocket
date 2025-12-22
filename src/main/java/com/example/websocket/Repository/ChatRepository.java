@@ -6,8 +6,7 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.mongodb.repository.Query;
 
 import com.example.websocket.model.ChatMessage;
-
-
+import com.example.websocket.model.ChatMessage.MessageStatus;
 import com.example.websocket.model.ChatMessage;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import java.util.List;
@@ -17,5 +16,8 @@ public interface ChatRepository extends MongoRepository<ChatMessage, String> {
     List<ChatMessage> findBySenderAndReceiverOrSenderAndReceiver(
             String sender1, String receiver1, 
             String sender2, String receiver2
+    );
+    long countBySenderAndReceiverAndStatus(
+        String sender, String receiver, MessageStatus status
     );
 }

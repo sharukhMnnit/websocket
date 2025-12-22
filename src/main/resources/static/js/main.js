@@ -629,34 +629,21 @@
 //     var li = document.createElement('li');
 //     li.id = "user-" + newUsername;
 //     li.innerHTML = `
-//         <div class="user-avatar">${newUsername.charAt(0).toUpperCase()}</div>
-//         <span>${newUsername}</span>
-//         <div class="user-status"></div>
-//     `;
-//     li.onclick = function() { selectUser(newUsername); };
-//     usersList.appendChild(li);
-// }
-
-// function onMessageReceived(payload) {
-//     var message = JSON.parse(payload.body);
-//     if (message.type === 'JOIN' && message.sender.toLowerCase() !== username.toLowerCase()) {
-//         fetchAllUsers(); // Refresh when new users join
-//     }
-// }
-
-// if(messageForm) messageForm.addEventListener('submit', sendMessage, true);
-//
-
-
-
+//        
+//update
 'use strict';
 
-// --- CONFIGURATION ---
+// ==========================================
+// 1. CONFIGURATION & STATE
+// ==========================================
 var username = localStorage.getItem('username');
 var stompClient = null;
 var selectedUser = null;
 
-// --- DOM ELEMENTS ---
+// Stores friend data: { username: "Shavez", unread: 2, lastMsgTime: 12345678 }
+var friendList = []; 
+
+// DOM Elements
 var usersList = document.querySelector('#usersList');
 var messageForm = document.querySelector('#messageForm');
 var messageInput = document.querySelector('#message');
@@ -666,17 +653,19 @@ var chatTitle = document.querySelector('#chat-title');
 // --- INITIALIZATION ---
 if (username) {
     connect();
-    setTimeout(fetchAllUsers, 500); 
+    // Fetch friends slightly delayed to ensure connection is ready
+    setTimeout(fetchFriends, 500); 
 } else {
     window.location.href = '/login.html';
 }
 
-// --- CONNECT ---
+// ==========================================
+// 2. WEBSOCKET CONNECTION
+// ==========================================
 function connect() {
-    // 1. Connect to WebSocket
     var socket = new SockJS('/ws'); 
     stompClient = Stomp.over(socket);
-    stompClient.debug = null; 
+    stompClient.debug = null; // Clean console
 
     var headers = { 'Authorization': 'Bearer ' + localStorage.getItem('jwtToken') };
 
@@ -686,38 +675,86 @@ function connect() {
 function onConnected() {
     console.log("Connected to WebSocket!");
     
-    // 2. Subscribe to Topics
-    stompClient.subscribe('/topic/public', onMessageReceived);
-    stompClient.subscribe('/user/queue/messages', onPrivateMessageReceived); // Handles Chat & Echo
-    stompClient.subscribe('/user/queue/ack', onAckReceived); // Handles Blue Ticks
+    // Subscribe to Topics
+    stompClient.subscribe('/topic/public', onMessageReceived); 
+    stompClient.subscribe('/user/queue/messages', onPrivateMessageReceived); // Chat & Echo
+    stompClient.subscribe('/user/queue/ack', onAckReceived); // Blue Ticks logic
     
-    // 3. Notify Server
+    // Notify Server
     stompClient.send("/app/chat.addUser", {}, JSON.stringify({sender: username, type: 'JOIN'}));
 }
 
-function onError(error) { console.error('WebSocket Error:', error); }
+function onError(error) { 
+    console.error('WebSocket Error:', error); 
+}
 
-// --- FETCH USERS (REST API) ---
-function fetchAllUsers() {
+// ==========================================
+// 3. FRIEND LIST & SIDEBAR LOGIC
+// ==========================================
+
+// --- FETCH FRIENDS ---
+function fetchFriends() {
     const token = localStorage.getItem('jwtToken');
     fetch('/api/users', { headers: { 'Authorization': 'Bearer ' + token.trim() }})
     .then(res => res.json())
     .then(users => {
-        usersList.innerHTML = ''; 
+        friendList = []; // Reset list
         if (Array.isArray(users)) {
             users.forEach(user => {
-                if (user && user.toLowerCase() !== username.toLowerCase()) addUserToSidebar(user);
+                if (user && user.toLowerCase() !== username.toLowerCase()) {
+                    friendList.push({
+                        username: user,
+                        unread: 0,
+                        lastMsgTime: 0 
+                    });
+                }
             });
         }
-    });
+        // Initial Render
+        sortAndRenderSidebar();
+    })
+    .catch(err => console.error("Could not fetch friends", err));
 }
 
-function addUserToSidebar(user) {
-    var li = document.createElement('li');
-    li.id = "user-" + user;
-    li.innerHTML = `<div class="user-avatar">${user.charAt(0).toUpperCase()}</div><span>${user}</span>`;
-    li.onclick = function() { selectUser(user); };
-    usersList.appendChild(li);
+// --- SORT & RENDER (Float to Top Logic) ---
+function sortAndRenderSidebar() {
+    // 1. Sort array in memory
+    friendList.sort((a, b) => {
+        // Priority 1: Unread on top
+        if (a.unread > 0 && b.unread === 0) return -1;
+        if (a.unread === 0 && b.unread > 0) return 1;
+        
+        // Priority 2: Newest message
+        return (b.lastMsgTime || 0) - (a.lastMsgTime || 0);
+    });
+
+    // 2. Re-draw HTML
+    usersList.innerHTML = ''; 
+    friendList.forEach(friend => {
+        var li = document.createElement('li');
+        li.id = "user-" + friend.username;
+        
+        // Show Red Badge logic
+        let badgeDisplay = friend.unread > 0 ? 'inline-block' : 'none';
+
+        li.innerHTML = `
+            <div class="user-avatar">${friend.username.charAt(0).toUpperCase()}</div>
+            <div class="user-info">
+                <span>${friend.username}</span>
+            </div>
+            <span id="badge-${friend.username}" class="unread-badge" style="display:${badgeDisplay}">
+                ${friend.unread}
+            </span> 
+        `;
+        li.onclick = function() { selectUser(friend.username); };
+        usersList.appendChild(li);
+    });
+
+    // Keep current user highlighted
+    if(selectedUser) {
+        let activeLi = document.getElementById("user-" + selectedUser);
+        if(activeLi) activeLi.classList.add('active');
+    }
 }
 
 // --- SELECT USER ---
@@ -726,13 +763,12 @@ function selectUser(user) {
     if(chatTitle) chatTitle.innerText = "Chat with " + user;
     messageArea.innerHTML = "";
     
-    // UI Update
-    document.querySelectorAll('#usersList li').forEach(li => li.classList.remove('active'));
-    var activeLi = document.getElementById("user-" + user);
-    if (activeLi) {
-        activeLi.classList.add('active');
-        activeLi.classList.remove('has-new-message');
+    // Reset Unread Count
+    var friend = friendList.find(f => f.username === user);
+    if (friend) {
+        friend.unread = 0;
     }
+    sortAndRenderSidebar(); // Remove badge
 
     // Fetch History
     const token = localStorage.getItem('jwtToken');
@@ -741,8 +777,7 @@ function selectUser(user) {
     .then(msgs => {
         msgs.forEach(msg => {
             const isSelf = msg.sender === username;
-            
-            // If I am reading unread messages, mark them READ now
+            // Mark unread messages as READ
             if (!isSelf && msg.status !== 'READ') {
                 sendAck(msg.id, 'READ');
                 msg.status = 'READ';
@@ -752,15 +787,17 @@ function selectUser(user) {
     });
 }
 
-// --- SEND MESSAGE (Optimistic UI) ---
+// ==========================================
+// 4. MESSAGING LOGIC
+// ==========================================
+
+// --- SEND MESSAGE ---
 function sendMessage(event) {
     event.preventDefault();
     var messageContent = messageInput.value.trim();
     
     if (messageContent && stompClient) {
-        
-        // 1. Create Temporary ID
-        var tempId = "temp-" + Date.now();
+        var tempId = "temp-" + Date.now(); // Temp ID for Optimistic UI
 
         var chatMessage = {
             sender: username,
@@ -769,13 +806,20 @@ function sendMessage(event) {
             receiver: selectedUser,
             timestamp: new Date().toISOString(),
             status: 'SENT',
-            frontId: tempId // Send this to server to track it
+            frontId: tempId 
         };
 
-        // 2. DISPLAY INSTANTLY (Zero Lag)
+        // Display Instantly
         displayMessage(chatMessage, true); 
 
-        // 3. Send to Server
+        // Update Sort Order
+        var friend = friendList.find(f => f.username === selectedUser);
+        if (friend) {
+            friend.lastMsgTime = new Date().getTime();
+            sortAndRenderSidebar();
+        }
+
+        // Send to Server
         if (selectedUser) {
             stompClient.send("/app/chat.private", {}, JSON.stringify(chatMessage));
         } else {
@@ -785,41 +829,43 @@ function sendMessage(event) {
     }
 }
 
-// --- HANDLE INCOMING MESSAGES (ECHO + CHAT) ---
+// --- RECEIVE MESSAGE ---
 function onPrivateMessageReceived(payload) {
     var message = JSON.parse(payload.body);
     
-    // A. HANDLE ECHO (My own message coming back from server)
+    // Case A: My Own Echo
     if (message.sender === username) {
-        // Find the temporary bubble using frontId
         if (message.frontId) {
             var tempBubble = document.getElementById("msg-" + message.frontId);
-            if (tempBubble) {
-                // SWAP ID: Replace temp ID with Real Server ID
-                tempBubble.id = "msg-" + message.id;
-                console.log("Updated bubble ID to: " + message.id);
-            }
+            if (tempBubble) tempBubble.id = "msg-" + message.id; // Swap ID
         }
-        return; // Stop here, don't display a duplicate
+        return; 
     }
 
-    // B. HANDLE FRIEND'S MESSAGE
+    // Case B: Friend's Message
+    var friend = friendList.find(f => f.username === message.sender);
+    if (friend) {
+        friend.lastMsgTime = new Date().getTime();
+        if (selectedUser !== message.sender) friend.unread += 1; // Increase Badge
+    } else {
+        // New friend (Dynamic Add)
+        friendList.push({ username: message.sender, unread: 1, lastMsgTime: new Date().getTime() });
+    }
+    
+    sortAndRenderSidebar(); // Trigger Float to Top
+
+    // Display Logic
     if (selectedUser && selectedUser.toLowerCase() === message.sender.toLowerCase()) {
-        // I am looking at the chat -> Mark READ
         displayMessage(message, false);
         sendAck(message.id, 'READ'); 
     } else {
-        // I am elsewhere -> Notification + Mark DELIVERED
-        var li = document.getElementById("user-" + message.sender);
-        if(li) li.classList.add('has-new-message');
         sendAck(message.id, 'DELIVERED'); 
     }
 }
 
-// --- HANDLE READ RECEIPTS ---
+// --- READ RECEIPTS (Blue Ticks) ---
 function onAckReceived(payload) {
-    var ack = JSON.parse(payload.body); // { messageId: "123", status: "READ" }
-    
+    var ack = JSON.parse(payload.body); 
     var msgElement = document.getElementById("msg-" + ack.messageId);
     if (msgElement) {
         var tickElement = msgElement.querySelector('.status-tick');
@@ -830,43 +876,32 @@ function onAckReceived(payload) {
     }
 }
 
-// --- HELPER: SEND ACK ---
 function sendAck(messageId, status) {
     if(!stompClient || !messageId) return;
-    var ack = { messageId: messageId, status: status };
-    stompClient.send("/app/chat.ack", {}, JSON.stringify(ack));
+    stompClient.send("/app/chat.ack", {}, JSON.stringify({ messageId: messageId, status: status }));
 }
 
 function onMessageReceived(payload) {
     var message = JSON.parse(payload.body);
-    if (message.type === 'JOIN') fetchAllUsers();
+    if (message.type === 'JOIN') fetchFriends();
 }
 
-// --- DISPLAY LOGIC ---
+// --- UI HELPERS ---
 function displayMessage(message, isSelf) {
     var li = document.createElement('li');
     li.classList.add('message-item', isSelf ? 'message-self' : 'message-other');
-    
-    // Use Server ID if available, otherwise Temp ID
     var domId = message.id ? "msg-" + message.id : "msg-" + message.frontId;
     li.id = domId;
-
-    var realTime = formatTime(message.timestamp); 
-    var statusHtml = "";
     
-    if (isSelf) {
-        var currentStatus = message.status || 'SENT'; 
-        statusHtml = `
-            <div class="message-meta">
-                <span class="message-time">${realTime}</span>
-                <span class="status-tick ${getStatusClass(currentStatus)}">
-                    ${getStatusIcon(currentStatus)}
-                </span>
-            </div>
-        `;
-    } else {
-        statusHtml = `<div class="message-meta"><span class="message-time">${realTime}</span></div>`;
-    }
+    var realTime = formatTime(message.timestamp); 
+    var statusHtml = isSelf ? `
+        <div class="message-meta">
+            <span class="message-time">${realTime}</span>
+            <span class="status-tick ${getStatusClass(message.status || 'SENT')}">
+                ${getStatusIcon(message.status || 'SENT')}
+            </span>
+        </div>` : 
+        `<div class="message-meta"><span class="message-time">${realTime}</span></div>`;
 
     li.innerHTML = `
         <span class="message-sender">${isSelf ? 'You' : message.sender}</span>
@@ -878,11 +913,9 @@ function displayMessage(message, isSelf) {
     messageArea.scrollTop = messageArea.scrollHeight;
 }
 
-// --- UTILS ---
 function formatTime(dateString) {
     if (!dateString) return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const date = new Date(dateString);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function getStatusIcon(status) {
@@ -904,3 +937,130 @@ function getStatusClass(status) {
 }
 
 if(messageForm) messageForm.addEventListener('submit', sendMessage, true);
+
+// ==========================================
+// 5. SOCIAL FEATURES (Search & Requests)
+// ==========================================
+
+// --- TAB SWITCHING ---
+function showChatTab() {
+    document.getElementById("usersList").style.display = 'block';
+    document.getElementById("searchResults").style.display = 'none';
+    document.getElementById("requestList").style.display = 'none';
+}
+
+function showRequestsTab() {
+    document.getElementById("usersList").style.display = 'none';
+    document.getElementById("searchResults").style.display = 'none';
+    document.getElementById("requestList").style.display = 'block';
+    fetchFriendRequests();
+}
+
+// --- SEARCH USERS ---
+function searchUsers() {
+    var query = document.getElementById("userSearch").value.trim();
+    var searchList = document.getElementById("searchResults");
+    var friendListUI = document.getElementById("usersList");
+
+    if (query.length < 3) {
+        searchList.style.display = 'none';
+        friendListUI.style.display = 'block';
+        return;
+    }
+
+    friendListUI.style.display = 'none';
+    searchList.style.display = 'block';
+    searchList.innerHTML = '<li style="color:#ccc; padding:10px;">Searching...</li>';
+
+    const token = localStorage.getItem('jwtToken');
+    fetch(`/api/users/search?query=${query}`, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(res => res.json())
+    .then(users => {
+        searchList.innerHTML = '';
+        if (users.length === 0) {
+            searchList.innerHTML = '<li style="padding:10px; color:#ccc;">No users found</li>';
+            return;
+        }
+        users.forEach(user => {
+            if (user.username === username) return; // Skip self
+
+            var li = document.createElement('li');
+            li.innerHTML = `
+                <div class="user-avatar" style="background:#3498db">${user.username.charAt(0).toUpperCase()}</div>
+                <span>${user.username}</span>
+                <button onclick="sendFriendRequest('${user.username}')" 
+                        style="margin-left:auto; background:#2ecc71; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">
+                    Add +
+                </button>
+            `;
+            searchList.appendChild(li);
+        });
+    })
+    .catch(err => searchList.innerHTML = '<li style="padding:10px;">Error searching</li>');
+}
+
+// --- SEND REQUEST ---
+function sendFriendRequest(targetUser) {
+    const token = localStorage.getItem('jwtToken');
+    fetch(`/api/friends/add/${targetUser}`, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token }
+    })
+    .then(res => {
+        if (res.ok) {
+            alert("Request sent to " + targetUser);
+            document.getElementById("userSearch").value = ""; 
+            showChatTab(); 
+        } else {
+            alert("Failed to send request.");
+        }
+    });
+}
+
+// --- FETCH & ACCEPT REQUESTS ---
+function fetchFriendRequests() {
+    const token = localStorage.getItem('jwtToken');
+    fetch('/api/friends/requests', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(res => res.json())
+    .then(senders => {
+        var reqList = document.getElementById("requestList");
+        reqList.innerHTML = '';
+        
+        var badge = document.getElementById("req-badge");
+        if(senders.length > 0) {
+            badge.innerText = senders.length;
+            badge.style.display = 'inline-block';
+        } else {
+            badge.style.display = 'none';
+            reqList.innerHTML = '<li style="padding:10px; color:#ccc;">No pending requests</li>';
+        }
+
+        senders.forEach(senderName => {
+            var li = document.createElement('li');
+            li.innerHTML = `
+                <div class="user-avatar" style="background:#95a5a6">${senderName.charAt(0).toUpperCase()}</div>
+                <span>${senderName}</span>
+                <button onclick="acceptRequest('${senderName}')" 
+                        style="margin-left:auto; background:#2ecc71; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">
+                    Accept
+                </button>
+            `;
+            reqList.appendChild(li);
+        });
+    });
+}
+
+function acceptRequest(senderName) {
+    const token = localStorage.getItem('jwtToken');
+    fetch(`/api/friends/accept/${senderName}`, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token }
+    })
+    .then(res => {
+        if(res.ok) {
+            alert("Friend Added!");
+            fetchFriendRequests(); // Refresh requests
+            fetchFriends(); // Update main chat list
+        }
+    });
+}
