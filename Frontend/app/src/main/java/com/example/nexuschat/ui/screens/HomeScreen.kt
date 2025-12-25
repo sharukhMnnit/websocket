@@ -66,7 +66,7 @@ fun HomeScreen(
                     value = searchQuery,
                     onValueChange = {
                         searchQuery = it
-                        viewModel.search(it)
+                        viewModel.searchUser(it)
                     },
                     modifier = Modifier
                         .fillMaxWidth()

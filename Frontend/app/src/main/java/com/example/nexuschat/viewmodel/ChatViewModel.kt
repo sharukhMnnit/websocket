@@ -54,12 +54,22 @@ class ChatViewModel @Inject constructor(
     // Helper to safely add messages (Optimistic + Real-time)
     private fun addMessageToState(msg: ChatMessage) {
         _messages.update { currentList ->
-            // Prevent duplicates (check ID or FrontID)
-            val exists = currentList.any {
+            // 1. Check if we already have this message (by ID or FrontID)
+            val existingIndex = currentList.indexOfFirst {
                 (it.id != null && it.id == msg.id) ||
                         (it.frontId != null && it.frontId == msg.frontId)
             }
-            if (!exists) currentList + msg else currentList
+
+            if (existingIndex != -1) {
+                // FOUND IT! We must REPLACE the old temporary message with the new real one
+                // This ensures we get the real server ID needed for Blue Ticks
+                val mutableList = currentList.toMutableList()
+                mutableList[existingIndex] = msg
+                mutableList
+            } else {
+                // New message, just add it
+                currentList + msg
+            }
         }
     }
 
@@ -91,7 +101,7 @@ class ChatViewModel @Inject constructor(
             content = content,
             sender = sender,
             receiver = receiver, // This connects the message to the specific friend
-            timestamp = System.currentTimeMillis().toString(),
+            timestamp = java.time.Instant.now().toString(),
             frontId = System.currentTimeMillis().toString(), // For duplicate detection
             status = MessageStatus.SENT
         )

@@ -1,3 +1,4 @@
+
 package com.example.nexuschat.viewmodel
 
 import androidx.lifecycle.ViewModel
@@ -49,7 +50,7 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun search(query: String) {
+    fun searchUser(query: String) {
         if (query.length < 2) {
             _searchResults.value = emptyList()
             return
@@ -58,7 +59,6 @@ class HomeViewModel @Inject constructor(
             try {
                 val token = "Bearer ${tokenManager.getToken()}"
                 val results = api.searchUsers(token, query)
-                // Filter out myself
                 _searchResults.value = results.filter { it.username != _currentUser.value }
             } catch (e: Exception) {
                 e.printStackTrace()

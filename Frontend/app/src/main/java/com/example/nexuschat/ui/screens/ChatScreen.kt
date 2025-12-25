@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -21,7 +22,8 @@ import androidx.navigation.NavController
 import com.example.nexuschat.data.model.ChatMessage
 import com.example.nexuschat.data.model.MessageStatus
 import com.example.nexuschat.viewmodel.ChatViewModel
-import androidx.compose.ui.text.font.FontWeight
+import java.time.format.DateTimeFormatter
+import java.time.ZoneId
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,12 +37,10 @@ fun ChatScreen(
     var text by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    // Load history when entering the screen
     LaunchedEffect(otherUser) {
         viewModel.loadHistory(otherUser)
     }
 
-    // Auto-scroll to bottom when a new message arrives
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
@@ -56,35 +56,25 @@ fun ChatScreen(
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             )
         }
     ) { padding ->
         Column(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .background(Color(0xFFF0F2F5)) // WhatsApp-like background color
+            modifier = Modifier.padding(padding).fillMaxSize().background(Color(0xFFF0F2F5))
         ) {
-            // Message List
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(messages) { msg ->
-                    val isMe = msg.sender == currentUser
-                    MessageBubble(msg, isMe)
+                    MessageBubble(msg, isMe = msg.sender == currentUser)
                 }
             }
 
-            // Input Area
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
@@ -95,14 +85,10 @@ fun ChatScreen(
                     shape = RoundedCornerShape(24.dp),
                     colors = TextFieldDefaults.colors(
                         focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                        focusedContainerColor = Color.White,
-                        unfocusedContainerColor = Color.White
+                        unfocusedIndicatorColor = Color.Transparent
                     )
                 )
-
-                Spacer(modifier = Modifier.width(8.dp))
-
+                Spacer(Modifier.width(8.dp))
                 FloatingActionButton(
                     onClick = {
                         if (text.isNotBlank()) {
@@ -110,10 +96,9 @@ fun ChatScreen(
                             text = ""
                         }
                     },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = Color.White
+                    containerColor = MaterialTheme.colorScheme.primary
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color.White)
                 }
             }
         }
@@ -135,25 +120,28 @@ fun MessageBubble(msg: ChatMessage, isMe: Boolean) {
                 )
                 .padding(8.dp)
         ) {
-            Text(
-                text = msg.content,
-                fontSize = 16.sp,
-                color = Color.Black
-            )
+            Text(text = msg.content, fontSize = 16.sp, color = Color.Black)
 
-            // Time & Status Row
-            Row(
-                modifier = Modifier.align(Alignment.End),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = msg.timestamp?.takeLast(8)?.take(5) ?: "", // Simple time formatting
-                    fontSize = 11.sp,
-                    color = Color.Gray
-                )
+            Row(modifier = Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+                // FIX: Visual Time Formatting logic
+                val timeString = remember(msg.timestamp) {
+                    try {
+                        if (msg.timestamp != null) {
+                            // Try parsing as ISO first (Web format)
+                            val instant = java.time.Instant.parse(msg.timestamp)
+                            val localTime = instant.atZone(ZoneId.systemDefault()).toLocalTime()
+                            localTime.format(DateTimeFormatter.ofPattern("hh:mm a"))
+                        } else ""
+                    } catch (e: Exception) {
+                        // If it fails (maybe old data was numbers?), ignore it
+                        ""
+                    }
+                }
+
+                Text(text = timeString, fontSize = 11.sp, color = Color.Gray)
 
                 if (isMe) {
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(Modifier.width(4.dp))
                     Text(
                         text = when (msg.status) {
                             MessageStatus.SENT -> "✓"
