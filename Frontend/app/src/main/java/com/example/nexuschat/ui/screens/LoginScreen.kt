@@ -2,11 +2,17 @@ package com.example.nexuschat.ui.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -25,11 +31,13 @@ fun LoginScreen(
     val authState by viewModel.authState.collectAsState()
     val context = LocalContext.current
 
+    // Helper to control focus (moving from User -> Pass)
+    val focusManager = LocalFocusManager.current
+
     // Observe Authentication State
     LaunchedEffect(authState) {
         when (authState) {
             is AuthState.Success -> {
-                // Navigate to Home and clear Login from backstack
                 navController.navigate(Screen.Home.route) {
                     popUpTo(Screen.Login.route) { inclusive = true }
                 }
@@ -58,7 +66,24 @@ fun LoginScreen(
             value = username,
             onValueChange = { username = it },
             label = { Text("Username") },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true, // FIX 1: Prevents "Enter" from creating a new line
+
+            // FIX 2: Solid Black Text Color
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.Black,
+                unfocusedTextColor = Color.Black,
+                cursorColor = Color.Black
+            ),
+
+            // FIX 3: Keyboard "Next" Action
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Next
+            ),
+            keyboardActions = KeyboardActions(
+                onNext = { focusManager.clearFocus() } // Or focusManager.moveFocus(FocusDirection.Down)
+            )
         )
 
         Spacer(Modifier.height(8.dp))
@@ -69,7 +94,27 @@ fun LoginScreen(
             onValueChange = { password = it },
             label = { Text("Password") },
             visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true, // FIX 1: Single line only
+
+            // FIX 2: Solid Black Text Color
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.Black,
+                unfocusedTextColor = Color.Black,
+                cursorColor = Color.Black
+            ),
+
+            // FIX 3: Keyboard "Done" Action (Triggers Login)
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Password,
+                imeAction = ImeAction.Done
+            ),
+            keyboardActions = KeyboardActions(
+                onDone = {
+                    focusManager.clearFocus()
+                    viewModel.login(username, password)
+                }
+            )
         )
 
         Spacer(Modifier.height(24.dp))

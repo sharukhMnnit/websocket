@@ -8,10 +8,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.PersonAdd
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,9 +26,6 @@ import androidx.navigation.NavController
 import com.example.nexuschat.data.model.UserSummary
 import com.example.nexuschat.ui.navigation.Screen
 import com.example.nexuschat.viewmodel.HomeViewModel
-import androidx.compose.material.icons.filled.PersonAdd
-import androidx.compose.material.icons.filled.ExitToApp
-import androidx.compose.material.icons.filled.Check
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,7 +56,11 @@ fun HomeScreen(
                             Icon(Icons.Default.ExitToApp, contentDescription = "Logout")
                         }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF008069), titleContentColor = Color.White, actionIconContentColor = Color.White)
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color(0xFF008069),
+                        titleContentColor = Color.White,
+                        actionIconContentColor = Color.White
+                    )
                 )
                 // Search Bar
                 OutlinedTextField(
@@ -74,7 +75,12 @@ fun HomeScreen(
                         .background(Color.White, RoundedCornerShape(8.dp)),
                     placeholder = { Text("Search Users...") },
                     leadingIcon = { Icon(Icons.Default.Search, "Search") },
-                    singleLine = true
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.Black,
+                        unfocusedTextColor = Color.Black,
+                        cursorColor = Color.Black
+                    )
                 )
             }
         },
@@ -88,8 +94,11 @@ fun HomeScreen(
                 )
                 NavigationBarItem(
                     selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    label = { Text("Requests (${requests.size})") },
+                    onClick = {
+                        selectedTab = 1
+                        viewModel.fetchRequests()
+                    },
+                    label = { Text("Requests ${if(requests.isNotEmpty()) "(${requests.size})" else ""}") },
                     icon = { Text("👋") }
                 )
             }
@@ -97,19 +106,27 @@ fun HomeScreen(
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
 
-            // If Searching, Show Search Results overlay
+            // Searching Mode
             if (searchQuery.isNotEmpty()) {
                 LazyColumn(modifier = Modifier.fillMaxSize().background(Color.White)) {
-                    item { Text("Search Results", modifier = Modifier.padding(16.dp), fontWeight = FontWeight.Bold) }
+                    item {
+                        Text(
+                            "Search Results",
+                            modifier = Modifier.padding(16.dp),
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Black
+                        )
+                    }
                     items(searchResults) { user ->
-                        SearchUserItem(user) {
+                        val isFriend = friends.any { it.username == user.username }
+                        SearchUserItem(user, isFriend) {
                             viewModel.sendFriendRequest(user.username)
-                            searchQuery = "" // Clear search after sending
+                            searchQuery = ""
                         }
                     }
                 }
             } else {
-                // Main Content
+                // Tab Mode
                 if (selectedTab == 0) {
                     // Chat List
                     LazyColumn {
@@ -121,10 +138,16 @@ fun HomeScreen(
                     }
                 } else {
                     // Requests List
-                    LazyColumn {
-                        items(requests) { sender ->
-                            RequestItem(sender) {
-                                viewModel.acceptRequest(sender)
+                    if (requests.isEmpty()) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("No pending requests", color = Color.Gray)
+                        }
+                    } else {
+                        LazyColumn {
+                            items(requests) { sender ->
+                                RequestItem(sender) {
+                                    viewModel.acceptRequest(sender)
+                                }
                             }
                         }
                     }
@@ -133,6 +156,8 @@ fun HomeScreen(
         }
     }
 }
+
+// --- ITEM ROWS (Simple & Solid Black) ---
 
 @Composable
 fun FriendItem(user: UserSummary, onClick: () -> Unit) {
@@ -144,7 +169,11 @@ fun FriendItem(user: UserSummary, onClick: () -> Unit) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Avatar(user.username)
             Spacer(Modifier.width(16.dp))
-            Text(text = user.username, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(
+                text = user.username,
+                fontSize = 18.sp,
+                color = Color.Black // Solid Black, Normal Weight
+            )
         }
     }
 }
@@ -155,8 +184,16 @@ fun RequestItem(username: String, onAccept: () -> Unit) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Avatar(username)
             Spacer(Modifier.width(16.dp))
-            Text(text = username, modifier = Modifier.weight(1f), fontSize = 18.sp)
-            Button(onClick = onAccept, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))) {
+            Text(
+                text = username,
+                modifier = Modifier.weight(1f),
+                fontSize = 18.sp,
+                color = Color.Black // Solid Black, Normal Weight
+            )
+            Button(
+                onClick = onAccept,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))
+            ) {
                 Text("Accept")
             }
         }
@@ -164,14 +201,24 @@ fun RequestItem(username: String, onAccept: () -> Unit) {
 }
 
 @Composable
-fun SearchUserItem(user: UserSummary, onAdd: () -> Unit) {
+fun SearchUserItem(user: UserSummary, isFriend: Boolean, onAdd: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().padding(4.dp)) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Avatar(user.username)
             Spacer(Modifier.width(16.dp))
-            Text(text = user.username, modifier = Modifier.weight(1f), fontSize = 18.sp)
-            IconButton(onClick = onAdd) {
-                Icon(Icons.Default.PersonAdd, contentDescription = "Add", tint = Color.Blue)
+            Text(
+                text = user.username,
+                modifier = Modifier.weight(1f),
+                fontSize = 18.sp,
+                color = Color.Black // Solid Black, Normal Weight
+            )
+
+            if (isFriend) {
+                Text("Added", color = Color(0xFF25D366), fontWeight = FontWeight.Bold)
+            } else {
+                IconButton(onClick = onAdd) {
+                    Icon(Icons.Default.PersonAdd, contentDescription = "Add", tint = Color.Blue)
+                }
             }
         }
     }
@@ -183,6 +230,10 @@ fun Avatar(name: String) {
         modifier = Modifier.size(40.dp).clip(CircleShape).background(Color.Gray),
         contentAlignment = Alignment.Center
     ) {
-        Text(text = name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
+        Text(
+            text = name.take(1).uppercase(),
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
