@@ -22,8 +22,10 @@ import androidx.navigation.NavController
 import com.example.nexuschat.data.model.ChatMessage
 import com.example.nexuschat.data.model.MessageStatus
 import com.example.nexuschat.viewmodel.ChatViewModel
-import java.time.format.DateTimeFormatter
-import java.time.ZoneId
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,14 +39,9 @@ fun ChatScreen(
     var text by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(otherUser) {
-        viewModel.loadHistory(otherUser)
-    }
-
+    LaunchedEffect(otherUser) { viewModel.loadHistory(otherUser) }
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
-        }
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
     }
 
     Scaffold(
@@ -60,9 +57,7 @@ fun ChatScreen(
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier.padding(padding).fillMaxSize().background(Color(0xFFF0F2F5))
-        ) {
+        Column(modifier = Modifier.padding(padding).fillMaxSize().background(Color(0xFFF0F2F5))) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
@@ -123,19 +118,9 @@ fun MessageBubble(msg: ChatMessage, isMe: Boolean) {
             Text(text = msg.content, fontSize = 16.sp, color = Color.Black)
 
             Row(modifier = Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-                // FIX: Visual Time Formatting logic
+                // Use the new Robust Time Logic
                 val timeString = remember(msg.timestamp) {
-                    try {
-                        if (msg.timestamp != null) {
-                            // Try parsing as ISO first (Web format)
-                            val instant = java.time.Instant.parse(msg.timestamp)
-                            val localTime = instant.atZone(ZoneId.systemDefault()).toLocalTime()
-                            localTime.format(DateTimeFormatter.ofPattern("hh:mm a"))
-                        } else ""
-                    } catch (e: Exception) {
-                        // If it fails (maybe old data was numbers?), ignore it
-                        ""
-                    }
+                    formatMessageTime(msg.timestamp)
                 }
 
                 Text(text = timeString, fontSize = 11.sp, color = Color.Gray)
@@ -156,5 +141,46 @@ fun MessageBubble(msg: ChatMessage, isMe: Boolean) {
                 }
             }
         }
+    }
+}
+
+// --- UNIVERSAL DATE PARSER (Works on Old & New Android) ---
+fun formatMessageTime(timestamp: String?): String {
+    if (timestamp.isNullOrBlank()) return ""
+
+    // 1. Try parsing as Number (Epoch Millis: "1766...")
+    try {
+        val millis = timestamp.toLong()
+        val date = Date(millis)
+        return SimpleDateFormat("hh:mm a", Locale.getDefault()).format(date)
+    } catch (e: Exception) {
+        // Not a number, continue to step 2...
+    }
+
+    // 2. Try parsing as ISO 8601 (Web Format: "2025-12-25T12:00:00.123Z")
+    // This uses SimpleDateFormat which works on ALL Android versions (no crash on API < 26)
+    try {
+        // Pattern matches the standard web ISO string
+        val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        isoFormat.timeZone = TimeZone.getTimeZone("UTC") // Web sends UTC
+
+        // We substring to remove the ".123Z" or "Z" parts to make parsing simpler/universal
+        // Takes first 19 chars: "2025-12-25T12:00:00"
+        val cleanTimestamp = if (timestamp.length >= 19) timestamp.substring(0, 19) else timestamp
+
+        val date = isoFormat.parse(cleanTimestamp)
+        if (date != null) {
+            return SimpleDateFormat("hh:mm a", Locale.getDefault()).format(date)
+        }
+    } catch (e: Exception) {
+        // Ignore
+    }
+
+    // 3. Fallback: If EVERYTHING fails, show the raw text so we know it exists
+    // (We shorten it to prevent it from breaking the layout)
+    return if (timestamp.length > 5 && timestamp.contains(":")) {
+        timestamp.substring(timestamp.indexOf(":") - 2, timestamp.indexOf(":") + 3) // Try to grab "12:00"
+    } else {
+        "Now"
     }
 }

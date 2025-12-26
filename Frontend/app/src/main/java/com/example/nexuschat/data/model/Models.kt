@@ -13,7 +13,10 @@ data class AuthResponse(
 )
 
 // --- User ---
-data class UserSummary(val username: String)
+data class UserSummary(
+    val username: String,
+    val unreadCount: Int = 0 // <--- CRITICAL: Must be here for Badges
+)
 
 // --- Chat ---
 data class ChatMessage(
@@ -22,14 +25,11 @@ data class ChatMessage(
     val sender: String,
     val receiver: String? = null,
     val type: MessageType = MessageType.CHAT,
-    val timestamp: String? = null,
+    val timestamp: String? = null, // Can be ISO String ("2025-...") or Epoch ("1766...")
     val status: MessageStatus = MessageStatus.SENT,
-    val frontId: String? = null // For UI optimism
+    val frontId: String? = null
 )
 
 enum class MessageType { CHAT, JOIN, LEAVE }
-
 enum class MessageStatus { RECEIVED, DELIVERED, READ, SENT }
-
-// --- Ack ---
 data class MessageAck(val messageId: String, val status: MessageStatus)

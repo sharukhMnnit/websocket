@@ -22,7 +22,7 @@ object AppModule {
     // --- CONFIGURATION ---
     // Emulator: "http://10.0.2.2:8080/"
     // Physical Device: "http://192.168.X.X:8080/"
-    private const val BASE_URL = "https://bicycle-mls-remembered-serious.trycloudflare.com/"
+    private const val BASE_URL = "https://marriage-villages-sacramento-skirts.trycloudflare.com/"
 
     @Provides
     @Singleton

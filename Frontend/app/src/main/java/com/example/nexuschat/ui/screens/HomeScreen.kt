@@ -132,6 +132,7 @@ fun HomeScreen(
                     LazyColumn {
                         items(friends) { friend ->
                             FriendItem(friend) {
+                                viewModel.clearUnread(friend.username) // <--- Clear Badge
                                 navController.navigate(Screen.Chat.createRoute(friend.username))
                             }
                         }
@@ -169,11 +170,31 @@ fun FriendItem(user: UserSummary, onClick: () -> Unit) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Avatar(user.username)
             Spacer(Modifier.width(16.dp))
+
+            // Username
             Text(
                 text = user.username,
                 fontSize = 18.sp,
-                color = Color.Black // Solid Black, Normal Weight
+                color = Color.Black,
+                modifier = Modifier.weight(1f)
             )
+
+            // RED BADGE (Shows if unreadCount > 0)
+            if (user.unreadCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .background(Color.Red, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = user.unreadCount.toString(),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
     }
 }

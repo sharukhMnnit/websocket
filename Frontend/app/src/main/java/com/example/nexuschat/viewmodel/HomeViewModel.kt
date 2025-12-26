@@ -1,4 +1,3 @@
-
 package com.example.nexuschat.viewmodel
 
 import androidx.lifecycle.ViewModel
@@ -10,6 +9,7 @@ import com.example.nexuschat.data.repository.ChatRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -20,7 +20,6 @@ class HomeViewModel @Inject constructor(
     private val tokenManager: TokenManager
 ) : ViewModel() {
 
-    // Lists
     private val _friends = MutableStateFlow<List<UserSummary>>(emptyList())
     val friends = _friends.asStateFlow()
 
@@ -37,6 +36,33 @@ class HomeViewModel @Inject constructor(
         _currentUser.value = tokenManager.getUsername() ?: ""
         loadAll()
         repository.connectSocket()
+
+        // 1. Listen for messages to update Red Badges
+        listenForNotifications()
+    }
+
+    private fun listenForNotifications() {
+        viewModelScope.launch {
+            repository.incomingMessages.collect { msg ->
+                // If message is from someone else, increase their badge
+                if (msg.sender != _currentUser.value) {
+                    _friends.update { list ->
+                        list.map { user ->
+                            if (user.username == msg.sender) {
+                                user.copy(unreadCount = user.unreadCount + 1)
+                            } else user
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Clear badge when chat opens
+    fun clearUnread(username: String) {
+        _friends.update { list ->
+            list.map { if (it.username == username) it.copy(unreadCount = 0) else it }
+        }
     }
 
     fun loadAll() {
@@ -82,7 +108,6 @@ class HomeViewModel @Inject constructor(
             try {
                 val token = "Bearer ${tokenManager.getToken()}"
                 api.sendFriendRequest(token, targetUser)
-                // Optionally clear search or show toast
                 _searchResults.value = emptyList()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -95,9 +120,7 @@ class HomeViewModel @Inject constructor(
             try {
                 val token = "Bearer ${tokenManager.getToken()}"
                 api.acceptFriendRequest(token, senderUser)
-                // Refresh lists
-                fetchRequests()
-                fetchFriends()
+                loadAll()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -106,6 +129,5 @@ class HomeViewModel @Inject constructor(
 
     fun logout() {
         tokenManager.clear()
-        // Handle navigation in UI
     }
 }
