@@ -71,4 +71,16 @@ public ResponseEntity<List<String>> getFriendRequests(Principal principal) {
     }
     return ResponseEntity.ok(senderNames);
 }
+// 3. Reject Friend Request (Add this to your existing Controller)
+    @PostMapping("/reject/{senderUsername}")
+    public ResponseEntity<?> rejectRequest(@PathVariable String senderUsername, Principal principal) {
+        User me = userRepository.findByUsername(principal.getName()).orElseThrow(() -> new RuntimeException("Current user not found"));
+        User sender = userRepository.findByUsername(senderUsername).orElseThrow(() -> new RuntimeException("Sender not found"));
+
+        // Simply remove the ID from the pending list
+        me.getFriendRequests().remove(sender.getId());
+        userRepository.save(me);
+
+        return ResponseEntity.ok("Friend request rejected.");
+    }
 }

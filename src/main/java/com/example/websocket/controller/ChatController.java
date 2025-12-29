@@ -121,9 +121,10 @@
 // }
 package com.example.websocket.controller;
 
-import com.example.websocket.model.ChatMessage;
-import com.example.websocket.model.ChatMessage.MessageStatus;
-import com.example.websocket.Repository.ChatRepository;
+import java.security.Principal;
+import java.time.LocalDateTime;
+import java.util.List;
+import com.example.websocket.model.SignalMessage;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -131,11 +132,15 @@ import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.security.Principal;
-import java.time.LocalDateTime;
-import java.util.List;
+import com.example.websocket.Repository.ChatRepository;
+import com.example.websocket.model.ChatMessage;
+import com.example.websocket.model.ChatMessage.MessageStatus;
 
 @CrossOrigin(origins = "*", maxAge = 3600)
 @RestController
@@ -244,4 +249,24 @@ public ResponseEntity<Long> countUnreadMessages(
 
     return ResponseEntity.ok(count);
 }
+   //adding signal message for webrtc
+   // --- 5. WEBRTC SIGNALING (Video Call & File Transfer Handshake) ---
+    @MessageMapping("/chat.signal") // Client sends to: /app/chat.signal
+    public void signal(@Payload SignalMessage signal) {
+        // We simply forward the signal to the specific user
+        // DESTINATION: /user/{username}/queue/signal
+        
+        System.out.println("Signaling: " + signal.getType() + " from " + signal.getSender() + " to " + signal.getReceiver());
+
+        if (signal.getReceiver() != null && !signal.getReceiver().isEmpty()) {
+            messagingTemplate.convertAndSendToUser(
+                signal.getReceiver(),
+                "/queue/signal", // Client subscribes to: /user/queue/signal
+                signal
+            );
+        }
+    }
+   
+
+
 }

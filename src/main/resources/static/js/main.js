@@ -639,9 +639,20 @@
 var username = localStorage.getItem('username');
 var stompClient = null;
 var selectedUser = null;
-
-// Stores friend data: { username: "Shavez", unread: 2, lastMsgTime: 12345678 }
 var friendList = []; 
+var requestList = []; 
+
+// --- WEBRTC STATE ---
+var peerConnection = null;
+var localStream = null;
+var dataChannel = null;
+var candidateQueue = []; 
+var isVideoCall = false;
+
+// STUN Servers
+const rtcConfig = {
+    iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ]
+};
 
 // DOM Elements
 var usersList = document.querySelector('#usersList');
@@ -649,12 +660,15 @@ var messageForm = document.querySelector('#messageForm');
 var messageInput = document.querySelector('#message');
 var messageArea = document.querySelector('#messageArea');
 var chatTitle = document.querySelector('#chat-title');
+var btnCall = document.getElementById('btnCall');
+var videoOverlay = document.getElementById('video-overlay');
 
-// --- INITIALIZATION ---
+// Initialization
 if (username) {
     connect();
-    // Fetch friends slightly delayed to ensure connection is ready
+    dragElement(videoOverlay);
     setTimeout(fetchFriends, 500); 
+    setTimeout(fetchRequests, 1000); 
 } else {
     window.location.href = '/login.html';
 }
@@ -665,205 +679,219 @@ if (username) {
 function connect() {
     var socket = new SockJS('/ws'); 
     stompClient = Stomp.over(socket);
-    stompClient.debug = null; // Clean console
-
     var headers = { 'Authorization': 'Bearer ' + localStorage.getItem('jwtToken') };
-
     stompClient.connect(headers, onConnected, onError);
 }
 
 function onConnected() {
     console.log("Connected to WebSocket!");
-    
-    // Subscribe to Topics
     stompClient.subscribe('/topic/public', onMessageReceived); 
-    stompClient.subscribe('/user/queue/messages', onPrivateMessageReceived); // Chat & Echo
-    stompClient.subscribe('/user/queue/ack', onAckReceived); // Blue Ticks logic
-    
-    // Notify Server
+    stompClient.subscribe('/user/queue/messages', onPrivateMessageReceived);
+    stompClient.subscribe('/user/queue/ack', onAckReceived); 
+    stompClient.subscribe('/user/queue/signal', onSignalReceived);
     stompClient.send("/app/chat.addUser", {}, JSON.stringify({sender: username, type: 'JOIN'}));
 }
 
-function onError(error) { 
-    console.error('WebSocket Error:', error); 
-}
+function onError(error) { console.error('WebSocket Error:', error); }
 
 // ==========================================
-// 3. FRIEND LIST & SIDEBAR LOGIC
+// 3. UI, FRIENDS & SEARCH
 // ==========================================
-
-// --- FETCH FRIENDS ---
 function fetchFriends() {
     const token = localStorage.getItem('jwtToken');
-    fetch('/api/users', { headers: { 'Authorization': 'Bearer ' + token.trim() }})
+    fetch('/api/users/users', { headers: { 'Authorization': 'Bearer ' + token }})
     .then(res => res.json())
     .then(users => {
-        friendList = []; // Reset list
+        friendList = [];
         if (Array.isArray(users)) {
             users.forEach(user => {
-                if (user && user.toLowerCase() !== username.toLowerCase()) {
-                    friendList.push({
-                        username: user,
-                        unread: 0,
-                        lastMsgTime: 0 
-                    });
+                let name = user.username || user;
+                if (name && name.toLowerCase() !== username.toLowerCase()) {
+                    friendList.push({ username: name, unread: 0 });
                 }
             });
         }
-        // Initial Render
-        sortAndRenderSidebar();
+        // Only render if we are on the chats tab
+        if(document.getElementById("btn-chats").classList.contains("active-tab")) {
+            renderUserList(friendList, false);
+        }
     })
     .catch(err => console.error("Could not fetch friends", err));
 }
 
-// --- SORT & RENDER (Float to Top Logic) ---
-function sortAndRenderSidebar() {
-    // 1. Sort array in memory
-    friendList.sort((a, b) => {
-        // Priority 1: Unread on top
-        if (a.unread > 0 && b.unread === 0) return -1;
-        if (a.unread === 0 && b.unread > 0) return 1;
-        
-        // Priority 2: Newest message
-        return (b.lastMsgTime || 0) - (a.lastMsgTime || 0);
+function fetchRequests() {
+    const token = localStorage.getItem('jwtToken');
+    fetch('/api/friends/requests', { headers: { 'Authorization': 'Bearer ' + token }})
+    .then(res => res.json())
+    .then(data => {
+        requestList = data.map(name => ({ username: name }));
+        const badge = document.getElementById('req-badge');
+        if(badge) {
+            badge.innerText = requestList.length;
+            badge.style.display = requestList.length > 0 ? 'inline-block' : 'none';
+        }
     });
-
-    // 2. Re-draw HTML
-    usersList.innerHTML = ''; 
-    friendList.forEach(friend => {
-        var li = document.createElement('li');
-        li.id = "user-" + friend.username;
-        
-        // Show Red Badge logic
-        let badgeDisplay = friend.unread > 0 ? 'inline-block' : 'none';
-
-        li.innerHTML = `
-            <div class="user-avatar">${friend.username.charAt(0).toUpperCase()}</div>
-            <div class="user-info">
-                <span>${friend.username}</span>
-            </div>
-            <span id="badge-${friend.username}" class="unread-badge" style="display:${badgeDisplay}">
-                ${friend.unread}
-            </span> 
-        `;
-        li.onclick = function() { selectUser(friend.username); };
-        usersList.appendChild(li);
-    });
-
-    // Keep current user highlighted
-    if(selectedUser) {
-        let activeLi = document.getElementById("user-" + selectedUser);
-        if(activeLi) activeLi.classList.add('active');
-    }
 }
 
-// --- SELECT USER ---
+// THIS FUNCTION RENDERS THE LISTS
+function renderUserList(list, isSearch) {
+    usersList.innerHTML = '';
+    if (!list || list.length === 0) {
+        usersList.innerHTML = '<li style="padding:15px; color:#999; text-align:center;">No users found</li>';
+        return;
+    }
+    list.forEach(user => {
+        var li = document.createElement('li');
+        li.id = "user-" + user.username;
+        
+        // Check if this person is already my friend
+        const isFriend = friendList.some(f => f.username === user.username);
+        
+        let actionHtml = '';
+        if (isSearch && !isFriend) {
+            // IF SEARCHING AND NOT FRIEND -> SHOW "ADD" BUTTON
+            actionHtml = `<button onclick="sendFriendRequest('${user.username}', event)" class="btn-add" style="float:right;">Add</button>`;
+        } else {
+            // IF FRIEND -> SHOW UNREAD BADGE
+            let badgeStyle = (user.unread && user.unread > 0) ? 'inline-block' : 'none';
+            actionHtml = `<span class="unread-badge" style="display:${badgeStyle}">${user.unread || 0}</span>`;
+        }
+
+        li.innerHTML = `
+            <div class="user-avatar">${user.username.charAt(0).toUpperCase()}</div>
+            <div style="flex-grow:1; margin-left:10px;">
+                <span class="username-text">${user.username}</span>
+            </div>
+            ${actionHtml}
+        `;
+        
+        // Click to chat (only if friend or you want to allow chatting with strangers)
+        li.onclick = function() { selectUser(user.username); };
+        
+        usersList.appendChild(li);
+    });
+}
+
+function renderRequestList() {
+    usersList.innerHTML = '';
+    if (requestList.length === 0) {
+        usersList.innerHTML = '<li style="padding:15px; color:#999; text-align:center;">No pending requests</li>';
+        return;
+    }
+    requestList.forEach(req => {
+        var li = document.createElement('li');
+        li.innerHTML = `
+            <div class="user-avatar">${req.username.charAt(0).toUpperCase()}</div>
+            <div style="flex-grow:1; margin-left:10px;">
+                <span class="username-text">${req.username}</span>
+            </div>
+            <div>
+                <button onclick="acceptRequest('${req.username}')" style="background:#2ecc71; color:white; border:none; padding:5px 10px; margin-right:5px; border-radius:4px; cursor:pointer;">✓</button>
+                <button onclick="rejectRequest('${req.username}')" style="background:#e74c3c; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">✕</button>
+            </div>
+        `;
+        usersList.appendChild(li);
+    });
+}
+
 function selectUser(user) {
     selectedUser = user;
-    if(chatTitle) chatTitle.innerText = "Chat with " + user;
+    chatTitle.innerText = user; 
     messageArea.innerHTML = "";
-    
-    // Reset Unread Count
-    var friend = friendList.find(f => f.username === user);
-    if (friend) {
-        friend.unread = 0;
-    }
-    sortAndRenderSidebar(); // Remove badge
+    if(btnCall) btnCall.style.display = 'block'; 
 
-    // Fetch History
+    // Find friend data to reset unread count
+    var friend = friendList.find(f => f.username === user);
+    if (friend) { friend.unread = 0; renderUserList(friendList, false); } 
+
     const token = localStorage.getItem('jwtToken');
     fetch(`/api/messages/${username}/${user}`, { headers: { 'Authorization': 'Bearer ' + token } })
     .then(res => res.json())
     .then(msgs => {
         msgs.forEach(msg => {
-            const isSelf = msg.sender === username;
-            // Mark unread messages as READ
-            if (!isSelf && msg.status !== 'READ') {
+            if (msg.sender !== username && msg.status !== 'READ') {
                 sendAck(msg.id, 'READ');
                 msg.status = 'READ';
             }
-            displayMessage(msg, isSelf);
+            displayMessage(msg, msg.sender === username);
         });
     });
 }
 
 // ==========================================
-// 4. MESSAGING LOGIC
+// 4. MESSAGING
 // ==========================================
-
-// --- SEND MESSAGE ---
 function sendMessage(event) {
     event.preventDefault();
-    var messageContent = messageInput.value.trim();
-    
-    if (messageContent && stompClient) {
-        var tempId = "temp-" + Date.now(); // Temp ID for Optimistic UI
-
+    var content = messageInput.value.trim();
+    if (content && stompClient) {
+        var tempId = "temp-" + Date.now();
         var chatMessage = {
-            sender: username,
-            content: messageContent,
-            type: 'CHAT',
-            receiver: selectedUser,
-            timestamp: new Date().toISOString(),
-            status: 'SENT',
-            frontId: tempId 
+            sender: username, content: content, type: 'CHAT', receiver: selectedUser,
+            timestamp: new Date().toISOString(), status: 'SENT', frontId: tempId
         };
-
-        // Display Instantly
         displayMessage(chatMessage, true); 
-
-        // Update Sort Order
-        var friend = friendList.find(f => f.username === selectedUser);
-        if (friend) {
-            friend.lastMsgTime = new Date().getTime();
-            sortAndRenderSidebar();
-        }
-
-        // Send to Server
-        if (selectedUser) {
-            stompClient.send("/app/chat.private", {}, JSON.stringify(chatMessage));
-        } else {
-            stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(chatMessage));
-        }
+        stompClient.send("/app/chat.private", {}, JSON.stringify(chatMessage));
         messageInput.value = '';
     }
 }
 
-// --- RECEIVE MESSAGE ---
+function displayMessage(message, isSelf) {
+    var li = document.createElement('li');
+    li.classList.add('message-item', isSelf ? 'message-self' : 'message-other');
+    li.id = "msg-" + (message.id || message.frontId || ("temp-" + Date.now()));
+
+    let bodyContent = `<span class="msg-text">${message.content}</span>`;
+    if (message.content.startsWith("[IMAGE]")) {
+        const url = message.content.split("|")[0].replace("[IMAGE]", "").trim();
+        bodyContent = `<img src="${url}" class="msg-image" onclick="window.open('${url}')" />`;
+    } 
+
+    var tickHtml = isSelf ? `<span class="status-tick ${getStatusClass(message.status)}">${getStatusIcon(message.status)}</span>` : '';
+
+    li.innerHTML = `
+        <span class="msg-sender-name">${message.sender}</span>
+        ${bodyContent}
+        <div class="message-meta">
+            <span class="message-time">${formatTime(message.timestamp)}</span>
+            ${tickHtml}
+        </div>
+    `;
+
+    messageArea.appendChild(li);
+    messageArea.scrollTop = messageArea.scrollHeight;
+}
+
 function onPrivateMessageReceived(payload) {
     var message = JSON.parse(payload.body);
-    
-    // Case A: My Own Echo
     if (message.sender === username) {
-        if (message.frontId) {
-            var tempBubble = document.getElementById("msg-" + message.frontId);
-            if (tempBubble) tempBubble.id = "msg-" + message.id; // Swap ID
+        if(message.frontId) {
+            var el = document.getElementById("msg-" + message.frontId);
+            if(el) el.id = "msg-" + message.id; 
         }
-        return; 
-    }
-
-    // Case B: Friend's Message
-    var friend = friendList.find(f => f.username === message.sender);
-    if (friend) {
-        friend.lastMsgTime = new Date().getTime();
-        if (selectedUser !== message.sender) friend.unread += 1; // Increase Badge
-    } else {
-        // New friend (Dynamic Add)
-        friendList.push({ username: message.sender, unread: 1, lastMsgTime: new Date().getTime() });
-    }
-    
-    sortAndRenderSidebar(); // Trigger Float to Top
-
-    // Display Logic
-    if (selectedUser && selectedUser.toLowerCase() === message.sender.toLowerCase()) {
+    } else if (selectedUser === message.sender) {
         displayMessage(message, false);
         sendAck(message.id, 'READ'); 
     } else {
+        var friend = friendList.find(f => f.username === message.sender);
+        if (friend) friend.unread++;
+        renderUserList(friendList, false);
         sendAck(message.id, 'DELIVERED'); 
     }
 }
 
-// --- READ RECEIPTS (Blue Ticks) ---
+function onMessageReceived(payload) {
+    var message = JSON.parse(payload.body);
+    if(message.type === 'JOIN' && message.sender !== username) {
+       // Optional: fetchFriends(); 
+    }
+}
+
+function sendAck(messageId, status) {
+    if(!stompClient || !messageId) return;
+    stompClient.send("/app/chat.ack", {}, JSON.stringify({ messageId: messageId, status: status }));
+}
+
 function onAckReceived(payload) {
     var ack = JSON.parse(payload.body); 
     var msgElement = document.getElementById("msg-" + ack.messageId);
@@ -876,191 +904,303 @@ function onAckReceived(payload) {
     }
 }
 
-function sendAck(messageId, status) {
-    if(!stompClient || !messageId) return;
-    stompClient.send("/app/chat.ack", {}, JSON.stringify({ messageId: messageId, status: status }));
-}
+// ==========================================
+// 5. WEBRTC (VIDEO & DATA)
+// ==========================================
+async function startVideoCall() {
+    if(!selectedUser) return alert("Select a user first!");
+    isVideoCall = true;
+    videoOverlay.style.display = 'block';
 
-function onMessageReceived(payload) {
-    var message = JSON.parse(payload.body);
-    if (message.type === 'JOIN') fetchFriends();
-}
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        document.getElementById('localVideo').srcObject = localStream;
 
-// --- UI HELPERS ---
-function displayMessage(message, isSelf) {
-    var li = document.createElement('li');
-    li.classList.add('message-item', isSelf ? 'message-self' : 'message-other');
-    var domId = message.id ? "msg-" + message.id : "msg-" + message.frontId;
-    li.id = domId;
-    
-    var realTime = formatTime(message.timestamp); 
-    var statusHtml = isSelf ? `
-        <div class="message-meta">
-            <span class="message-time">${realTime}</span>
-            <span class="status-tick ${getStatusClass(message.status || 'SENT')}">
-                ${getStatusIcon(message.status || 'SENT')}
-            </span>
-        </div>` : 
-        `<div class="message-meta"><span class="message-time">${realTime}</span></div>`;
+        createPeerConnection();
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+        
+        dataChannel = peerConnection.createDataChannel("nexus-files");
+        setupDataChannelEvents(dataChannel);
 
-    li.innerHTML = `
-        <span class="message-sender">${isSelf ? 'You' : message.sender}</span>
-        <p style="margin:0">${message.content}</p>
-        ${statusHtml}
-    `;
-
-    messageArea.appendChild(li);
-    messageArea.scrollTop = messageArea.scrollHeight;
-}
-
-function formatTime(dateString) {
-    if (!dateString) return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function getStatusIcon(status) {
-    switch(status) {
-        case 'SENT': return '✓'; 
-        case 'DELIVERED': return '✓✓'; 
-        case 'READ': return '✓✓';
-        default: return '✓';
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        sendSignal("offer", offer);
+        
+    } catch (err) {
+        console.error("Error starting video:", err);
+        alert("Camera access denied or not found.");
+        videoOverlay.style.display = 'none';
     }
 }
 
-function getStatusClass(status) {
-    switch(status) {
-        case 'SENT': return 'tick-sent';
-        case 'DELIVERED': return 'tick-delivered';
-        case 'READ': return 'tick-read';
-        default: return 'tick-sent';
+async function startDataConnection() {
+    if(!selectedUser) return alert("Select a user first!");
+    displayMessage({sender: 'System', content: `🔗 Establishing File Connection with ${selectedUser}...`}, true);
+    try {
+        createPeerConnection();
+        dataChannel = peerConnection.createDataChannel("nexus-files");
+        setupDataChannelEvents(dataChannel);
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        sendSignal("offer", offer);
+    } catch (err) { console.error("Error starting data connection:", err); }
+}
+
+async function onSignalReceived(payload) {
+    const signal = JSON.parse(payload.body);
+    if (signal.sender === username) return;
+    try {
+        if (signal.type === 'offer') {
+            const isVideoOffer = signal.data.sdp.includes("m=video");
+            const msg = isVideoOffer ? `📞 Incoming Video Call from ${signal.sender}. Accept?` : `📂 Incoming File Connection from ${signal.sender}. Accept?`;
+            
+            if (confirm(msg)) {
+                selectedUser = signal.sender;
+                if(isVideoOffer) videoOverlay.style.display = 'block';
+                
+                createPeerConnection();
+                peerConnection.ondatachannel = (e) => setupDataChannelEvents(e.channel);
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.data));
+                processCandidateQueue();
+
+                if (isVideoOffer) {
+                    isVideoCall = true;
+                    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                    document.getElementById('localVideo').srcObject = localStream;
+                    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+                }
+
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                sendSignal("answer", answer);
+                
+                if(!isVideoOffer) displayMessage({sender: 'System', content: `✅ Connected to ${selectedUser} for files.`}, true);
+            }
+        } else if (signal.type === 'answer') {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.data));
+            processCandidateQueue();
+        } else if (signal.type === 'candidate') {
+            if (peerConnection && peerConnection.remoteDescription) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(signal.data));
+            } else {
+                candidateQueue.push(signal.data);
+            }
+        }
+    } catch (error) { console.error("Signaling Error:", error); }
+}
+
+function createPeerConnection() {
+    candidateQueue = [];
+    peerConnection = new RTCPeerConnection(rtcConfig);
+    peerConnection.ontrack = (event) => {
+        if (event.streams && event.streams[0]) {
+            document.getElementById('remoteVideo').srcObject = event.streams[0];
+        }
+    };
+    peerConnection.onicecandidate = (event) => {
+        if (event.candidate) sendSignal("candidate", event.candidate);
+    };
+}
+
+function sendSignal(type, data) {
+    stompClient.send("/app/chat.signal", {}, JSON.stringify({ type: type, sender: username, receiver: selectedUser, data: data }));
+}
+
+function endCall() {
+    if (peerConnection) peerConnection.close();
+    if (localStream) localStream.getTracks().forEach(track => track.stop());
+    videoOverlay.style.display = 'none';
+    peerConnection = null;
+    isVideoCall = false;
+}
+
+function processCandidateQueue() {
+    while (candidateQueue.length > 0) {
+        peerConnection.addIceCandidate(new RTCIceCandidate(candidateQueue.shift())).catch(e=>{});
     }
 }
+
+// ==========================================
+// 6. FILE TRANSFER LOGIC
+// ==========================================
+function handleFileSelect(input) {
+    const file = input.files[0];
+    if (!file) return;
+    if (dataChannel && dataChannel.readyState === 'open') {
+        sendP2PFile(file);
+    } else {
+        if(confirm("P2P Tunnel is closed. Connect to " + selectedUser + " now to send files?")) {
+            startDataConnection();
+        }
+    }
+    input.value = ''; 
+}
+
+function sendP2PFile(file) {
+    displayMessage({
+        sender: username, 
+        content: `⚡ Sending file: ${file.name} (${(file.size/1024).toFixed(1)} KB)...`, 
+        timestamp: new Date().toISOString(), status: 'SENT'
+    }, true);
+
+    const meta = JSON.stringify({ type: 'file-meta', name: file.name, size: file.size, fileType: file.type });
+    dataChannel.send(meta);
+
+    const chunkSize = 16 * 1024; 
+    const fileReader = new FileReader();
+    let offset = 0;
+
+    fileReader.onload = (e) => {
+        dataChannel.send(e.target.result);
+        offset += e.target.result.byteLength;
+        if (offset < file.size) {
+            readSlice(offset);
+        } else {
+            console.log("File sent!");
+        }
+    };
+    const readSlice = o => {
+        const slice = file.slice(offset, o + chunkSize);
+        fileReader.readAsArrayBuffer(slice);
+    };
+    readSlice(0);
+}
+
+let incomingFileInfo = null;
+let incomingFileBuffer = [];
+let receivedSize = 0;
+
+function setupDataChannelEvents(channel) {
+    channel.onopen = () => console.log("Data Channel Open");
+    channel.onmessage = (event) => {
+        const data = event.data;
+        if (typeof data === 'string') {
+            incomingFileInfo = JSON.parse(data);
+            incomingFileBuffer = [];
+            receivedSize = 0;
+            displayMessage({sender: 'System', content: `⬇️ Receiving ${incomingFileInfo.name}...`}, false);
+        } else {
+            if (!incomingFileInfo) return;
+            incomingFileBuffer.push(data);
+            receivedSize += data.byteLength;
+            if (receivedSize >= incomingFileInfo.size) {
+                const blob = new Blob(incomingFileBuffer, { type: incomingFileInfo.fileType });
+                downloadFile(blob, incomingFileInfo.name);
+                incomingFileInfo = null; 
+            }
+        }
+    };
+}
+
+function downloadFile(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName; a.click();
+    displayMessage({sender: 'System', content: `✅ File ${fileName} downloaded!`}, false);
+}
+
+// ==========================================
+// 7. UTILS
+// ==========================================
+function dragElement(elmnt) {
+    var pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+    var header = elmnt.querySelector("h4");
+    if (header) { header.onmousedown = dragMouseDown; }
+
+    function dragMouseDown(e) {
+        e = e || window.event;
+        e.preventDefault();
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        document.onmouseup = closeDragElement;
+        document.onmousemove = elementDrag;
+    }
+    function elementDrag(e) {
+        e = e || window.event;
+        e.preventDefault();
+        pos1 = pos3 - e.clientX;
+        pos2 = pos4 - e.clientY;
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        elmnt.style.top = (elmnt.offsetTop - pos2) + "px";
+        elmnt.style.left = (elmnt.offsetLeft - pos1) + "px";
+    }
+    function closeDragElement() {
+        document.onmouseup = null;
+        document.onmousemove = null;
+    }
+}
+
+function formatTime(d) { return new Date(d).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+function getStatusIcon(s) { return s === 'READ' ? '✓✓' : (s === 'DELIVERED' ? '✓✓' : '✓'); }
+function getStatusClass(s) { return s === 'READ' ? 'tick-read' : (s === 'DELIVERED' ? 'tick-delivered' : 'tick-sent'); }
 
 if(messageForm) messageForm.addEventListener('submit', sendMessage, true);
 
 // ==========================================
-// 5. SOCIAL FEATURES (Search & Requests)
+// 8. GLOBAL EXPORTS & SEARCH (FIXED)
 // ==========================================
 
-// --- TAB SWITCHING ---
-function showChatTab() {
-    document.getElementById("usersList").style.display = 'block';
-    document.getElementById("searchResults").style.display = 'none';
-    document.getElementById("requestList").style.display = 'none';
-}
-
-function showRequestsTab() {
-    document.getElementById("usersList").style.display = 'none';
-    document.getElementById("searchResults").style.display = 'none';
-    document.getElementById("requestList").style.display = 'block';
-    fetchFriendRequests();
-}
-
-// --- SEARCH USERS ---
-function searchUsers() {
+// FIXED SEARCH: Now calls the Database via API
+window.searchUsers = function() {
     var query = document.getElementById("userSearch").value.trim();
-    var searchList = document.getElementById("searchResults");
-    var friendListUI = document.getElementById("usersList");
-
-    if (query.length < 3) {
-        searchList.style.display = 'none';
-        friendListUI.style.display = 'block';
+    
+    // If empty, return to showing friends
+    if(query === "") {
+        renderUserList(friendList, false);
         return;
     }
 
-    friendListUI.style.display = 'none';
-    searchList.style.display = 'block';
-    searchList.innerHTML = '<li style="color:#ccc; padding:10px;">Searching...</li>';
-
     const token = localStorage.getItem('jwtToken');
-    fetch(`/api/users/search?query=${query}`, { headers: { 'Authorization': 'Bearer ' + token } })
-    .then(res => res.json())
-    .then(users => {
-        searchList.innerHTML = '';
-        if (users.length === 0) {
-            searchList.innerHTML = '<li style="padding:10px; color:#ccc;">No users found</li>';
-            return;
-        }
-        users.forEach(user => {
-            if (user.username === username) return; // Skip self
-
-            var li = document.createElement('li');
-            li.innerHTML = `
-                <div class="user-avatar" style="background:#3498db">${user.username.charAt(0).toUpperCase()}</div>
-                <span>${user.username}</span>
-                <button onclick="sendFriendRequest('${user.username}')" 
-                        style="margin-left:auto; background:#2ecc71; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">
-                    Add +
-                </button>
-            `;
-            searchList.appendChild(li);
-        });
-    })
-    .catch(err => searchList.innerHTML = '<li style="padding:10px;">Error searching</li>');
-}
-
-// --- SEND REQUEST ---
-function sendFriendRequest(targetUser) {
-    const token = localStorage.getItem('jwtToken');
-    fetch(`/api/friends/add/${targetUser}`, {
-        method: 'POST',
+    
+    // Call the Backend API
+    fetch(`/api/users/search?query=${encodeURIComponent(query)}`, { 
         headers: { 'Authorization': 'Bearer ' + token }
     })
-    .then(res => {
-        if (res.ok) {
-            alert("Request sent to " + targetUser);
-            document.getElementById("userSearch").value = ""; 
-            showChatTab(); 
-        } else {
-            alert("Failed to send request.");
-        }
-    });
-}
-
-// --- FETCH & ACCEPT REQUESTS ---
-function fetchFriendRequests() {
-    const token = localStorage.getItem('jwtToken');
-    fetch('/api/friends/requests', { headers: { 'Authorization': 'Bearer ' + token } })
     .then(res => res.json())
-    .then(senders => {
-        var reqList = document.getElementById("requestList");
-        reqList.innerHTML = '';
+    .then(results => {
+        // Merge with existing friend info to keep unread counts if they appear in search
+        const mergedResults = results.map(u => {
+            const existing = friendList.find(f => f.username === u.username);
+            return existing ? existing : { username: u.username, unread: 0 };
+        });
         
-        var badge = document.getElementById("req-badge");
-        if(senders.length > 0) {
-            badge.innerText = senders.length;
-            badge.style.display = 'inline-block';
-        } else {
-            badge.style.display = 'none';
-            reqList.innerHTML = '<li style="padding:10px; color:#ccc;">No pending requests</li>';
-        }
-
-        senders.forEach(senderName => {
-            var li = document.createElement('li');
-            li.innerHTML = `
-                <div class="user-avatar" style="background:#95a5a6">${senderName.charAt(0).toUpperCase()}</div>
-                <span>${senderName}</span>
-                <button onclick="acceptRequest('${senderName}')" 
-                        style="margin-left:auto; background:#2ecc71; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">
-                    Accept
-                </button>
-            `;
-            reqList.appendChild(li);
-        });
-    });
-}
-
-function acceptRequest(senderName) {
-    const token = localStorage.getItem('jwtToken');
-    fetch(`/api/friends/accept/${senderName}`, {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + token }
+        renderUserList(mergedResults, true); // true = Show Add button
     })
-    .then(res => {
-        if(res.ok) {
-            alert("Friend Added!");
-            fetchFriendRequests(); // Refresh requests
-            fetchFriends(); // Update main chat list
-        }
-    });
-}
+    .catch(err => console.error("Search Error:", err));
+};
+
+window.showChatTab = function() {
+    document.getElementById("btn-chats").className = "tab-btn active-tab";
+    document.getElementById("btn-requests").className = "tab-btn inactive-tab";
+    renderUserList(friendList, false);
+};
+
+window.showRequestsTab = function() {
+    document.getElementById("btn-chats").className = "tab-btn inactive-tab";
+    document.getElementById("btn-requests").className = "tab-btn active-tab";
+    renderRequestList();
+};
+
+window.startVideoCall = startVideoCall;
+window.endCall = endCall;
+window.handleFileSelect = handleFileSelect;
+
+window.sendFriendRequest = function(u, e) {
+    if(e) e.stopPropagation(); 
+    const token = localStorage.getItem('jwtToken');
+    fetch(`/api/friends/add/${u}`, { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }})
+    .then(res => { if(res.ok) alert(`Request Sent to ${u}!`); else res.text().then(alert); });
+};
+
+window.acceptRequest = function(u) {
+    const token = localStorage.getItem('jwtToken');
+    fetch(`/api/friends/accept/${u}`, { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }})
+    .then(res => { if(res.ok) { alert("Friend Added!"); fetchFriends(); fetchRequests(); showChatTab(); }});
+};
+
+window.rejectRequest = function(u) {
+    const token = localStorage.getItem('jwtToken');
+    fetch(`/api/friends/reject/${u}`, { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }})
+    .then(() => fetchRequests());
+};

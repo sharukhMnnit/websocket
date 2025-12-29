@@ -3,34 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <title>Login - Nexus Chat</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> 
+    <style>
         body { font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; margin: 0; }
         .login-container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 90%; max-width: 350px; text-align: center; }
         input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        /* CHANGED: Added type="button" to prevent accidental submits */
         button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; }
         button:hover { background: #0056b3; }
         .error { color: red; font-size: 0.9em; display: none; margin-top: 10px; }
-        a { color: #007bff; text-decoration: none; }
+        a { color: #007bff; text-decoration: none; cursor: pointer; }
     </style>
 </head>
 <body>
 
 <div class="login-container">
     <h2>Nexus Chat</h2>
-    <input type="text" id="username" placeholder="Username" autocomplete="off">
-    <input type="password" id="password" placeholder="Password">
-    <button onclick="login()">Log In</button>
+    <input type="text" id="username" placeholder="Username" autocomplete="off" onkeyup="handleEnter(event)">
+    <input type="password" id="password" placeholder="Password" onkeyup="handleEnter(event)">
+    
+    <button type="button" onclick="login()">Log In</button>
+    
     <p class="error" id="error-msg">Invalid Credentials</p>
-    <p style="font-size: 0.8em; margin-top: 15px;">Don't have an account? <a href="#" onclick="register()">Sign Up</a></p>
+    <p style="font-size: 0.8em; margin-top: 15px;">Don't have an account? <a onclick="register()">Sign Up</a></p>
 </div>
 
 <script>
-    // --- THE FIX: RELATIVE URL (Works on Cloudflare & Localhost) ---
     const API_URL = '/api/auth'; 
 
+    // Handle Enter Key Press
+    function handleEnter(event) {
+        if (event.key === "Enter") {
+            login();
+        }
+    }
+
     function login() {
-        const username = document.getElementById('username').value;
-        const password = document.getElementById('password').value;
+        // FIX 1: Trim whitespace to avoid "User " vs "User" mismatch
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value.trim();
         const errorMsg = document.getElementById('error-msg');
 
         errorMsg.style.display = 'none';
@@ -46,30 +57,36 @@
             body: JSON.stringify({ username, password })
         })
         .then(res => {
-            if (!res.ok) throw new Error("Login Failed");
+            if (!res.ok) {
+                // Return promise rejection to go to catch block with specific status
+                return Promise.reject("Invalid Username or Password");
+            }
             return res.json();
         })
         .then(data => {
             if (data.accessToken) {
-                // 1. SAVE TOKEN
                 localStorage.setItem('jwtToken', data.accessToken);
                 localStorage.setItem('username', data.username);
-                
-                // 2. REDIRECT RELATIVELY
                 window.location.href = '/index.html'; 
             } else {
-                showError("Invalid response from server");
+                showError("Login failed: No token received");
             }
         })
         .catch(err => {
-            console.error(err);
-            showError("Invalid Username or Password");
+            console.error("Login Error:", err);
+            // FIX 2: Distinguish between Network Error and Bad Credentials
+            if (err === "Invalid Username or Password") {
+                showError("Invalid Username or Password");
+            } else {
+                showError("Server Error or Network Issue. Try again.");
+            }
         });
     }
 
     function register() {
-        const username = document.getElementById('username').value;
-        const password = document.getElementById('password').value;
+        // FIX 1: Trim here too
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value.trim();
         
         if(!username || !password) {
             showError("Enter details to register");
@@ -84,6 +101,8 @@
         .then(res => {
             if(res.ok) {
                 alert("Registration Successful! Please Log In.");
+                // FIX 3: Optional - Auto-fill logic or focus
+                // We keep the values in the boxes so the user can just click "Log In"
             } else {
                 res.text().then(text => showError(text || "Username already taken"));
             }
@@ -96,6 +115,10 @@
         el.innerText = msg;
         el.style.display = 'block';
     }
+    
+    // Clear storage on load to prevent weird "already logged in" states on the login page
+    localStorage.removeItem('jwtToken');
+    localStorage.removeItem('username');
 </script>
 
 </body>
