@@ -23,7 +23,7 @@ class WebSocketClient @Inject constructor(
     // IMPORTANT:
     // 1. Use 'wss://' for Cloudflare (Secure WebSocket).
     // 2. Update this URL every time you restart the Cloudflare tunnel!
-    private val WS_URL = "wss://triumph-evaluated-progressive-occur.trycloudflare.com/ws/websocket"
+    private val WS_URL = "wss://parking-headquarters-structure-slide.trycloudflare.com/ws/websocket"
 
     // FIX 1: Add buffer capacity so messages don't get dropped when UI is busy
     private val _incomingMessages = MutableSharedFlow<ChatMessage>(

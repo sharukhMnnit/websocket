@@ -1,12 +1,7 @@
 package com.example.nexuschat.util
 
-import android.content.ContentValues
 import android.content.Context
-import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
 import android.util.Log
-import android.widget.Toast
 import com.example.nexuschat.data.model.SignalMessage
 import com.example.nexuschat.data.repository.ChatRepository
 import com.google.gson.Gson
@@ -14,9 +9,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.webrtc.*
-import java.io.File
-import java.io.FileOutputStream
-import java.nio.ByteBuffer
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,15 +20,24 @@ class WebRtcManager @Inject constructor(
     private val TAG = "WebRtcManager"
     private var peerConnection: PeerConnection? = null
     private var factory: PeerConnectionFactory? = null
+
+    // Tracks
     private var localVideoTrack: VideoTrack? = null
     private var remoteVideoTrack: VideoTrack? = null
     private var localAudioTrack: AudioTrack? = null
     private var dataChannel: DataChannel? = null
+
     private val eglBase = EglBase.create()
 
+    // Callbacks for UI
     var onRemoteStreamReady: ((VideoTrack) -> Unit)? = null
-    lateinit var context: Context
+    var onIncomingCall: ((String) -> Unit)? = null  // 🔔 Triggers Popup
+    var onCallEnded: (() -> Unit)? = null           // 📴 Triggers Screen Close
 
+    lateinit var context: Context
+    private var pendingOffer: SignalMessage? = null // 📦 Holds call until accepted
+
+    // --- VIEW HELPERS ---
     fun attachLocalView(renderer: SurfaceViewRenderer) {
         renderer.init(eglBase.eglBaseContext, null)
         renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
@@ -50,8 +51,10 @@ class WebRtcManager @Inject constructor(
         renderer.init(eglBase.eglBaseContext, null)
         renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
         renderer.setZOrderMediaOverlay(false)
-        renderer.setEnableHardwareScaler(false)
+        renderer.setEnableHardwareScaler(false) // Fixes Black Screen
         renderer.setMirror(false)
+
+        // Add current track or wait for new one
         remoteVideoTrack?.addSink(renderer)
         this.onRemoteStreamReady = { track -> track.addSink(renderer) }
     }
@@ -59,9 +62,15 @@ class WebRtcManager @Inject constructor(
     fun initialize(context: Context) {
         if (factory != null) return
         this.context = context.applicationContext
-        val options = PeerConnectionFactory.InitializationOptions.builder(this.context).createInitializationOptions()
+
+        val options = PeerConnectionFactory.InitializationOptions.builder(this.context)
+            .createInitializationOptions()
         PeerConnectionFactory.initialize(options)
-        val factoryOptions = PeerConnectionFactory.Options().apply { disableNetworkMonitor = true }
+
+        val factoryOptions = PeerConnectionFactory.Options().apply {
+            disableNetworkMonitor = true
+        }
+
         factory = PeerConnectionFactory.builder()
             .setOptions(factoryOptions)
             .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true))
@@ -86,23 +95,16 @@ class WebRtcManager @Inject constructor(
         }, MediaConstraints())
     }
 
+    // 👇 UPDATED: Notify UI instead of Auto-Answering
     fun handleSignal(signal: SignalMessage, myUsername: String) {
         val dataMap = signal.data as? Map<String, Any> ?: return
+
         try {
             if (signal.type == "offer") {
-                if (factory == null) initialize(context)
-                createPeerConnection(signal.sender, myUsername)
-                setupLocalMedia()
-                val sdpStr = dataMap["sdp"] as? String
-                if (sdpStr != null) {
-                    peerConnection?.setRemoteDescription(object : SdpObserverAdapter() {}, SessionDescription(SessionDescription.Type.OFFER, sdpStr))
-                    peerConnection?.createAnswer(object : SdpObserverAdapter() {
-                        override fun onCreateSuccess(desc: SessionDescription?) {
-                            peerConnection?.setLocalDescription(object : SdpObserverAdapter() {}, desc)
-                            val answerMap = mapOf("sdp" to desc?.description, "type" to desc?.type?.canonicalForm())
-                            repository.sendSignal(SignalMessage("answer", myUsername, signal.sender, answerMap))
-                        }
-                    }, MediaConstraints())
+                // 🛑 Don't answer yet. Notify UI.
+                pendingOffer = signal
+                CoroutineScope(Dispatchers.Main).launch {
+                    onIncomingCall?.invoke(signal.sender)
                 }
             } else if (signal.type == "answer") {
                 val sdpStr = dataMap["sdp"] as? String
@@ -118,24 +120,48 @@ class WebRtcManager @Inject constructor(
                 }
             } else if (signal.type == "bye") {
                 endCall()
+                CoroutineScope(Dispatchers.Main).launch {
+                    onCallEnded?.invoke()
+                }
             }
         } catch (e: Exception) { Log.e(TAG, "Signal Error", e) }
     }
 
-    fun endCall() {
-        try { peerConnection?.close() } catch (e: Exception) {}
-        peerConnection = null
+    // ✅ NEW: Called when user clicks "Accept"
+    fun acceptCall(myUsername: String) {
+        val offer = pendingOffer ?: return
+        val dataMap = offer.data as? Map<String, Any> ?: return
+
+        if (factory == null) initialize(context)
+        createPeerConnection(offer.sender, myUsername)
+        setupLocalMedia() // Turn on camera now!
+
+        val sdpStr = dataMap["sdp"] as? String
+        if (sdpStr != null) {
+            peerConnection?.setRemoteDescription(object : SdpObserverAdapter() {}, SessionDescription(SessionDescription.Type.OFFER, sdpStr))
+            peerConnection?.createAnswer(object : SdpObserverAdapter() {
+                override fun onCreateSuccess(desc: SessionDescription?) {
+                    peerConnection?.setLocalDescription(object : SdpObserverAdapter() {}, desc)
+                    val answerMap = mapOf("sdp" to desc?.description, "type" to desc?.type?.canonicalForm())
+                    repository.sendSignal(SignalMessage("answer", myUsername, offer.sender, answerMap))
+                }
+            }, MediaConstraints())
+        }
+        pendingOffer = null
     }
 
-    // 👇 THIS IS THE FUNCTION THAT WAS MISSING OR UNRESOLVED
-    fun sendFile(uri: android.net.Uri) {
-        if (dataChannel == null) return
+    // 🔴 UPDATED: Send "bye" signal when ending
+    fun endCall(targetUser: String? = null, myUsername: String? = null) {
+        if (targetUser != null && myUsername != null) {
+            repository.sendSignal(SignalMessage("bye", myUsername, targetUser, null))
+        }
+
         try {
-            val inputStream = context.contentResolver.openInputStream(uri)
-            val bytes = inputStream?.readBytes()
-            inputStream?.close()
-            if (bytes != null) dataChannel?.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false))
-        } catch (e: Exception) { Log.e(TAG, "Send File Error", e) }
+            peerConnection?.close()
+        } catch (e: Exception) {}
+        peerConnection = null
+        remoteVideoTrack = null
+        pendingOffer = null
     }
 
     private fun setupLocalMedia() {
@@ -146,21 +172,38 @@ class WebRtcManager @Inject constructor(
                 if (capturer != null) {
                     val videoSource = factory?.createVideoSource(capturer.isScreencast)
                     capturer.initialize(helper, context, videoSource?.capturerObserver)
-                    capturer.startCapture(640, 480, 30)
+
+                    // HD Quality (1280x720)
+                    capturer.startCapture(1280, 720, 30)
+
                     localVideoTrack = factory?.createVideoTrack("100", videoSource)
                     localVideoTrack?.setEnabled(true)
                 }
+
                 val audioSource = factory?.createAudioSource(MediaConstraints())
                 localAudioTrack = factory?.createAudioTrack("101", audioSource)
                 localAudioTrack?.setEnabled(true)
             } catch (e: Exception) { Log.e(TAG, "Media Creation Failed", e) }
         }
+
+        // Always attach tracks to the active connection
         if (peerConnection != null) {
             try {
                 if (localVideoTrack != null) peerConnection?.addTrack(localVideoTrack, listOf("ARDAMS"))
                 if (localAudioTrack != null) peerConnection?.addTrack(localAudioTrack, listOf("ARDAMS"))
             } catch (e: Exception) { Log.e(TAG, "Attach Track Failed", e) }
         }
+    }
+
+    // --- Helpers (Same as before) ---
+    fun sendFile(uri: android.net.Uri) {
+        if (dataChannel == null) return
+        try {
+            val inputStream = context.contentResolver.openInputStream(uri)
+            val bytes = inputStream?.readBytes()
+            inputStream?.close()
+            if (bytes != null) dataChannel?.send(DataChannel.Buffer(java.nio.ByteBuffer.wrap(bytes), false))
+        } catch (e: Exception) { Log.e(TAG, "Send File Error", e) }
     }
 
     private fun createPeerConnection(targetUser: String, myUsername: String) {
@@ -180,6 +223,7 @@ class WebRtcManager @Inject constructor(
                         val videoTrack = track as VideoTrack
                         videoTrack.setEnabled(true)
                         remoteVideoTrack = videoTrack
+                        // Notify UI
                         CoroutineScope(Dispatchers.Main).launch { onRemoteStreamReady?.invoke(videoTrack) }
                     }
                 }
@@ -191,6 +235,7 @@ class WebRtcManager @Inject constructor(
                     override fun onBufferedAmountChange(l: Long) {}
                 })
             }
+            // Empty Overrides
             override fun onIceConnectionChange(p0: PeerConnection.IceConnectionState?) {}
             override fun onAddStream(stream: MediaStream?) {}
             override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
@@ -215,19 +260,19 @@ class WebRtcManager @Inject constructor(
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val fileName = "NexusChat_${System.currentTimeMillis()}.bin"
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val contentValues = ContentValues().apply {
-                        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                        put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
                     }
-                    val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                    val uri = context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
                     uri?.let { context.contentResolver.openOutputStream(it)?.use { stream -> stream.write(data) } }
                 } else {
-                    val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
-                    FileOutputStream(file).use { it.write(data) }
+                    val file = java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), fileName)
+                    java.io.FileOutputStream(file).use { it.write(data) }
                 }
-                CoroutineScope(Dispatchers.Main).launch { Toast.makeText(context, "File Saved!", Toast.LENGTH_SHORT).show() }
+                CoroutineScope(Dispatchers.Main).launch { android.widget.Toast.makeText(context, "File Saved!", android.widget.Toast.LENGTH_SHORT).show() }
             } catch (e: Exception) { Log.e(TAG, "File Save Error", e) }
         }
     }
