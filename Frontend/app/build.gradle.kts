@@ -18,6 +18,9 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -53,6 +56,9 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    // ADD THIS LINE
+    implementation("io.github.webrtc-sdk:android:125.6422.06.1")
+    //implementation("com.webrtc:google-webrtc:1.0.32006")
     implementation("androidx.compose.material:material-icons-extended:1.5.4")
 
     // --- ADDED FOR NEXUS CHAT ---

@@ -1204,3 +1204,8 @@ window.rejectRequest = function(u) {
     fetch(`/api/friends/reject/${u}`, { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }})
     .then(() => fetchRequests());
 };
+
+
+
+//.\mvnw.cmd clean spring-boot:run
+//cloudflared tunnel --protocol http2 --url http://127.0.0.1:8080

@@ -2,6 +2,7 @@ package com.example.nexuschat.di
 
 import android.content.Context
 import com.example.nexuschat.data.remote.ApiService
+import com.example.nexuschat.data.remote.WebSocketClient // Ensure this is imported
 import com.example.nexuschat.util.TokenManager
 import com.google.gson.Gson
 import dagger.Module
@@ -19,10 +20,7 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object AppModule {
 
-    // --- CONFIGURATION ---
-    // Emulator: "http://10.0.2.2:8080/"
-    // Physical Device: "http://192.168.X.X:8080/"
-    private const val BASE_URL = "https://marriage-villages-sacramento-skirts.trycloudflare.com/"
+    private const val BASE_URL = "https://triumph-evaluated-progressive-occur.trycloudflare.com/"
 
     @Provides
     @Singleton
@@ -34,7 +32,7 @@ object AppModule {
         return OkHttpClient.Builder()
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
-            .pingInterval(30, TimeUnit.SECONDS) // Keeps WebSocket alive
+            .pingInterval(30, TimeUnit.SECONDS)
             .build()
     }
 
@@ -58,5 +56,15 @@ object AppModule {
     @Singleton
     fun provideTokenManager(@ApplicationContext context: Context): TokenManager {
         return TokenManager(context)
+    }
+
+    // 👇 FIXED: Changed TokenManager to Gson to match WebSocketClient constructor
+    @Provides
+    @Singleton
+    fun provideWebSocketClient(
+        client: OkHttpClient,
+        gson: Gson
+    ): WebSocketClient {
+        return WebSocketClient(client, gson)
     }
 }

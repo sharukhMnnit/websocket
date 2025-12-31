@@ -1,6 +1,7 @@
 package com.example.nexuschat.data.repository
 
 import com.example.nexuschat.data.model.ChatMessage
+import com.example.nexuschat.data.model.SignalMessage
 import com.example.nexuschat.data.model.UserSummary
 import com.example.nexuschat.data.remote.ApiService
 import com.example.nexuschat.data.remote.WebSocketClient
@@ -15,6 +16,7 @@ class ChatRepository @Inject constructor(
     // 1. Expose flows so ViewModel can listen
     val incomingMessages = webSocketClient.incomingMessages
     val incomingAcks = webSocketClient.incomingAcks
+    val incomingSignals = webSocketClient.incomingSignals
 
     fun connectSocket() {
         tokenManager.getToken()?.let { webSocketClient.connect(it) }
@@ -36,6 +38,10 @@ class ChatRepository @Inject constructor(
     // Updated to accept the full object (Fixes the ViewModel error)
     fun sendMessage(msg: ChatMessage) {
         webSocketClient.sendMessage(msg)
+    }
+
+    fun sendSignal(signal: com.example.nexuschat.data.model.SignalMessage) {
+        webSocketClient.sendSignal(signal)
     }
 
     fun sendReadAck(msgId: String) {

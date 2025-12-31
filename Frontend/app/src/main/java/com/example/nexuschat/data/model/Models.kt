@@ -33,3 +33,11 @@ data class ChatMessage(
 enum class MessageType { CHAT, JOIN, LEAVE }
 enum class MessageStatus { RECEIVED, DELIVERED, READ, SENT }
 data class MessageAck(val messageId: String, val status: MessageStatus)
+
+// --- Signaling (WebRTC & File Transfer) ---
+data class SignalMessage(
+    val type: String,      // "offer", "answer", "candidate"
+    val sender: String,
+    val receiver: String,
+    val data: Any?         // Can be an SDP object or ICE Candidate map
+)

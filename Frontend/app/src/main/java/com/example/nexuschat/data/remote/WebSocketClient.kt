@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import okhttp3.*
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.example.nexuschat.data.model.SignalMessage
 
 @Singleton
 class WebSocketClient @Inject constructor(
@@ -22,7 +23,7 @@ class WebSocketClient @Inject constructor(
     // IMPORTANT:
     // 1. Use 'wss://' for Cloudflare (Secure WebSocket).
     // 2. Update this URL every time you restart the Cloudflare tunnel!
-    private val WS_URL = "wss://marriage-villages-sacramento-skirts.trycloudflare.com/ws/websocket"
+    private val WS_URL = "wss://triumph-evaluated-progressive-occur.trycloudflare.com/ws/websocket"
 
     // FIX 1: Add buffer capacity so messages don't get dropped when UI is busy
     private val _incomingMessages = MutableSharedFlow<ChatMessage>(
@@ -38,6 +39,13 @@ class WebSocketClient @Inject constructor(
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val incomingAcks: SharedFlow<MessageAck> = _incomingAcks
+
+    private val _incomingSignals = MutableSharedFlow<SignalMessage>(
+        replay = 1,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val incomingSignals: SharedFlow<SignalMessage> = _incomingSignals
 
     fun connect(token: String) {
         if (webSocket != null) return // Already connected
@@ -77,6 +85,14 @@ class WebSocketClient @Inject constructor(
         }
     }
 
+    fun sendSignal(signal: SignalMessage) {
+        val json = gson.toJson(signal)
+        // Note: The backend controller listens at @MessageMapping("/chat.signal")
+        // So the destination is /app/chat.signal
+        val frame = "SEND\ndestination:/app/chat.signal\ncontent-type:application/json\n\n$json\u0000"
+        webSocket?.send(frame)
+    }
+
     fun sendAck(msgId: String, status: String) {
         val ackObj = mapOf("messageId" to msgId, "status" to status)
         val json = gson.toJson(ackObj)
@@ -91,6 +107,7 @@ class WebSocketClient @Inject constructor(
             // Auto-Subscribe upon connection
             subscribe("/user/queue/messages")
             subscribe("/user/queue/ack")
+            subscribe("/user/queue/signal")
         } else if (text.startsWith("MESSAGE")) {
             // Parse Body
             // We use safe substrings to avoid crashes on weird server responses
@@ -102,11 +119,16 @@ class WebSocketClient @Inject constructor(
 
                 try {
                     if (body.contains("\"messageId\"") && body.contains("\"status\"")) {
+                        // It's an ACK
                         val ack = gson.fromJson(body, MessageAck::class.java)
                         _incomingAcks.tryEmit(ack)
+                    } else if (body.contains("\"type\"") && (body.contains("\"offer\"") || body.contains("\"answer\"") || body.contains("\"candidate\""))) {
+                        // It's a WebRTC Signal
+                        val signal = gson.fromJson(body, SignalMessage::class.java)
+                        _incomingSignals.tryEmit(signal)
                     } else {
+                        // It's a Chat Message
                         val msg = gson.fromJson(body, ChatMessage::class.java)
-                        // FIX 2: tryEmit will now succeed because of the buffer!
                         _incomingMessages.tryEmit(msg)
                     }
                 } catch (e: Exception) {
