@@ -38,6 +38,11 @@ class ChatViewModel @Inject constructor(
 
     // Buffer for ACKs that arrive before the Echo
     private val pendingAcks = ConcurrentHashMap<String, MessageStatus>()
+    // --- Pagination State ---
+    private var currentPage = 0
+    private val pageSize = 20
+    private var isLastPage = false
+    private var isLoadingHistory = false
 
     init {
         _currentUser.value = repository.getCurrentUser() ?: ""
@@ -175,13 +180,54 @@ class ChatViewModel @Inject constructor(
         return incoming
     }
 
-    fun loadHistory(otherUser: String) {
+//    fun loadHistory(otherUser: String) {
+//        val myName = _currentUser.value
+//        if (myName.isEmpty()) return
+//        viewModelScope.launch {
+//            repository.getChatHistory(myName, otherUser).onSuccess { history ->
+//                _messages.value = history
+//            }
+//        }
+//    }
+
+    fun loadNextPage() {
+        val otherUser = currentChatUser ?: return
         val myName = _currentUser.value
-        if (myName.isEmpty()) return
+
+        if (myName.isEmpty() || isLastPage || isLoadingHistory) return
+
+        isLoadingHistory = true
+
         viewModelScope.launch {
-            repository.getChatHistory(myName, otherUser).onSuccess { history ->
-                _messages.value = history
-            }
+            repository.getChatHistory(myName, otherUser, currentPage, pageSize)
+                .onSuccess { newMessages ->
+                    // 1. Check if we've reached the end
+                    if (newMessages.size < pageSize) {
+                        isLastPage = true
+                    }
+
+                    // 2. Prepend older messages to the top of the list
+                    // (Backend returns them Old->New, so we just place them before current messages)
+                    _messages.update { currentList ->
+                        newMessages + currentList
+                    }
+
+                    // 3. Increment Page for next call
+                    currentPage++
+                    isLoadingHistory = false
+                }
+                .onFailure {
+                    isLoadingHistory = false
+                    Log.e("ChatViewModel", "Failed to load history", it)
+                }
         }
+    }
+
+    // Helper to reset (e.g., if you enter a new chat)
+    fun resetAndLoad() {
+        currentPage = 0
+        isLastPage = false
+        _messages.value = emptyList()
+        loadNextPage()
     }
 }

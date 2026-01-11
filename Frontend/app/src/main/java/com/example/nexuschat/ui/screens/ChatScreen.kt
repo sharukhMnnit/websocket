@@ -56,6 +56,19 @@ fun ChatScreen(
     val context = LocalContext.current
     var incomingCallSender by remember { mutableStateOf<String?>(null) }
 
+    // --- NEW: Track if it's the very first load to prevent premature pagination ---
+    var isFirstLoad by remember { mutableStateOf(true) }
+
+    // --- NEW: Detect when user scrolls to top (Index 0) ---
+    val isAtTop by remember {
+        derivedStateOf {
+            // Only trigger if we have messages and hit the top
+            val firstIndex = listState.firstVisibleItemIndex
+            val firstOffset = listState.firstVisibleItemScrollOffset
+            firstIndex == 0 && firstOffset == 0 && messages.isNotEmpty()
+        }
+    }
+
     // Permissions & Launchers
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -72,7 +85,9 @@ fun ChatScreen(
     // Initialize & Listeners
     LaunchedEffect(Unit) {
         viewModel.webRtcManager.initialize(context.applicationContext)
-        viewModel.loadHistory(otherUser)
+
+        // --- UPDATED: Use resetAndLoad instead of loadHistory ---
+        viewModel.resetAndLoad()
 
         viewModel.webRtcManager.onIncomingCall = { sender ->
             if (!viewModel.isVideoCallActive.value) incomingCallSender = sender
@@ -83,12 +98,37 @@ fun ChatScreen(
         }
     }
 
+    // --- NEW: Load more messages when reaching the top ---
+    LaunchedEffect(isAtTop) {
+        // Only load next page if we are at the top AND it's not the initial load
+        if (isAtTop && !isFirstLoad) {
+            viewModel.loadNextPage()
+        }
+    }
+
+    // Auto-scroll logic: INSTANT jump on first load, SMOOTH scroll for new messages
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+        if (messages.isNotEmpty()) {
+            val lastIndex = messages.size - 1
+
+            if (isFirstLoad) {
+                // INSTANT jump to bottom on first load to prevent triggering pagination
+                listState.scrollToItem(lastIndex)
+                isFirstLoad = false
+            } else {
+                // Smooth scroll for new messages sent/received while viewing
+                // Simple heuristic: If we are near the bottom (or just started), scroll down.
+                val isNearBottom = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index == (messages.size - 2)
+
+                // Also scroll if the list was previously small (like just starting a chat)
+                if (isNearBottom || messages.size <= 20) {
+                    listState.animateScrollToItem(lastIndex)
+                }
+            }
+        }
     }
 
     Scaffold(
-        // We handle top bars automatically
         contentWindowInsets = WindowInsets.statusBars,
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -139,18 +179,14 @@ fun ChatScreen(
                 }
             }
         },
-        // ✅ FIX: Use 'bottomBar' for Input Area.
-        // Scaffold automatically places this above the keyboard if 'adjustResize' is on.
         bottomBar = {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
-                shadowElevation = 12.dp, // Higher elevation to separate from list
+                shadowElevation = 12.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier
-                        // Only pad for the gesture bar (at the very bottom).
-                        // Do NOT add imePadding() here because the window already resizes.
                         .navigationBarsPadding()
                         .padding(12.dp)
                         .fillMaxWidth(),
@@ -192,15 +228,14 @@ fun ChatScreen(
     ) { padding ->
         Box(
             modifier = Modifier
-                .padding(padding) // Scaffold calculates space for topBar and bottomBar automatically
+                .padding(padding)
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Messages List
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize(), // Fill remaining space
+                    modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {

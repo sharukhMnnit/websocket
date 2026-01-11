@@ -30,9 +30,14 @@ class ChatRepository @Inject constructor(
     }
 
     // Renamed to match ViewModel call
-    suspend fun getChatHistory(user1: String, user2: String): Result<List<ChatMessage>> = runCatching {
+    suspend fun getChatHistory(
+        user1: String,
+        user2: String,
+        page: Int,
+        size: Int
+    ): Result<List<ChatMessage>> = runCatching {
         val token = "Bearer ${tokenManager.getToken()}"
-        api.getChatHistory(token, user1, user2)
+        api.getChatHistory(token, user1, user2, page, size)
     }
 
     // Updated to accept the full object (Fixes the ViewModel error)

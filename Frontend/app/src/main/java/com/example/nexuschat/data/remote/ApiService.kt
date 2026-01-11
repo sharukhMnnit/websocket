@@ -19,7 +19,9 @@ interface ApiService {
     suspend fun getChatHistory(
         @Header("Authorization") token: String,
         @Path("user1") user1: String,
-        @Path("user2") user2: String
+        @Path("user2") user2: String,
+        @Query("page") page: Int,  // <--- Added
+        @Query("size") size: Int
     ): List<ChatMessage>
 
     // --- NEW: Search & Friend Requests ---
