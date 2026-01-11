@@ -70,8 +70,8 @@ fun ChatScreen(
 
     // --- INITIALIZE & LISTENERS ---
     LaunchedEffect(Unit) {
-        viewModel.webRtcManager.initialize(context)
-        viewModel.webRtcManager.context = context
+        viewModel.webRtcManager.initialize(context.applicationContext)
+//        viewModel.webRtcManager.context = context
         viewModel.loadHistory(otherUser)
 
         // 1. Listen for Incoming Call
@@ -171,15 +171,21 @@ fun VideoCallOverlay(webRtcManager: WebRtcManager, onEndCall: () -> Unit) {
         // 1. REMOTE VIDEO (Full Screen)
         AndroidView(
             factory = { ctx -> SurfaceViewRenderer(ctx).apply { webRtcManager.attachRemoteView(this) } },
-            // 👇 CRITICAL: Removed background(Color.Black).
-            // It was covering the video. Now it is transparent, so video shows through.
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            // ✅ FIX: onRelease must be inside the AndroidView parentheses
+            onRelease = { renderer ->
+                renderer.release()
+            }
         )
 
         // 2. LOCAL VIDEO (Bottom Right)
         AndroidView(
             factory = { ctx -> SurfaceViewRenderer(ctx).apply { webRtcManager.attachLocalView(this) } },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).size(100.dp, 150.dp).background(Color.DarkGray)
+            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).size(100.dp, 150.dp).background(Color.DarkGray),
+            // ✅ FIX: onRelease must be inside the AndroidView parentheses
+            onRelease = { renderer ->
+                renderer.release()
+            }
         )
 
         FloatingActionButton(onClick = onEndCall, containerColor = Color.Red, modifier = Modifier.align(Alignment.BottomCenter).padding(32.dp)) {

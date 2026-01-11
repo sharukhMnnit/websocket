@@ -20,7 +20,7 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object AppModule {
 
-    private const val BASE_URL = "https://parking-headquarters-structure-slide.trycloudflare.com/"
+    private const val BASE_URL = "https://identified-tommy-intl-boulevard.trycloudflare.com/"
 
     @Provides
     @Singleton

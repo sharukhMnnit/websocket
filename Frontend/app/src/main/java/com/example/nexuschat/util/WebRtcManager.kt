@@ -26,6 +26,7 @@ class WebRtcManager @Inject constructor(
     private var remoteVideoTrack: VideoTrack? = null
     private var localAudioTrack: AudioTrack? = null
     private var dataChannel: DataChannel? = null
+    private var videoCapturer: VideoCapturer? = null
 
     private val eglBase = EglBase.create()
 
@@ -150,15 +151,30 @@ class WebRtcManager @Inject constructor(
         pendingOffer = null
     }
 
-    // 🔴 UPDATED: Send "bye" signal when ending
     fun endCall(targetUser: String? = null, myUsername: String? = null) {
         if (targetUser != null && myUsername != null) {
             repository.sendSignal(SignalMessage("bye", myUsername, targetUser, null))
         }
 
         try {
+            // 1. Stop Camera
+            videoCapturer?.stopCapture()
+            videoCapturer?.dispose()
+            videoCapturer = null
+
+            // 2. Release Local Tracks (So next call starts fresh)
+            localVideoTrack?.dispose()
+            localVideoTrack = null
+
+            localAudioTrack?.dispose()
+            localAudioTrack = null
+
+            // 3. Close Connection
             peerConnection?.close()
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.e(TAG, "Error closing call", e)
+        }
+
         peerConnection = null
         remoteVideoTrack = null
         pendingOffer = null
@@ -168,8 +184,11 @@ class WebRtcManager @Inject constructor(
         if (localVideoTrack == null) {
             try {
                 val helper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
-                val capturer = createVideoCapturer()
-                if (capturer != null) {
+
+                videoCapturer = createVideoCapturer()
+
+                // Use ?.let to work with the nullable variable safely
+                videoCapturer?.let { capturer ->
                     val videoSource = factory?.createVideoSource(capturer.isScreencast)
                     capturer.initialize(helper, context, videoSource?.capturerObserver)
 
@@ -248,10 +267,22 @@ class WebRtcManager @Inject constructor(
     }
 
     private fun createVideoCapturer(): VideoCapturer? {
-        val enumerator = Camera2Enumerator(context)
-        enumerator.deviceNames.forEach { if (enumerator.isFrontFacing(it)) return enumerator.createCapturer(it, null) }
-        enumerator.deviceNames.forEach { return enumerator.createCapturer(it, null) }
-        return null
+        return try {
+            val enumerator = Camera2Enumerator(context)
+            enumerator.deviceNames.forEach {
+                if (enumerator.isFrontFacing(it)) return enumerator.createCapturer(
+                    it,
+                    null
+                )
+            }
+            enumerator.deviceNames.forEach { return enumerator.createCapturer(it, null) }
+            return null
+        }
+        catch (e: SecurityException) {
+            // Prevents crash if permission is missing
+            Log.e("WebRtcManager", "Camera permission missing", e)
+            null
+        }
     }
 
     private fun saveReceivedFile(buffer: DataChannel.Buffer) {
